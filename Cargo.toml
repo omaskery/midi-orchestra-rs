@@ -6,4 +6,6 @@ authors = ["omask"]
 [dependencies]
 pitch_calc = "0.11.1"
 ghakuf = "0.5.1"
-cpal = "0.8.1"
+rodio = "0.6.0"
+synth = "0.11.0"
+sample = "0.9.1"

@@ -1,6 +1,8 @@
 extern crate pitch_calc;
 extern crate ghakuf;
-extern crate cpal;
+extern crate sample;
+extern crate synth;
+extern crate rodio;
 
 mod beep;
 
@@ -96,7 +98,7 @@ impl ghakuf::reader::Handler for Handler {
                     self.note_ended(ch, note);
                 }
             }
-            &MidiEvent::NoteOff { ch, note, velocity } => {
+            &MidiEvent::NoteOff { ch, note, .. } => {
                 self.note_ended(ch, note);
             },
             _ => {
@@ -108,7 +110,7 @@ impl ghakuf::reader::Handler for Handler {
     fn sys_ex_event(&mut self, delta_time: u32, event: &SysExEvent, _data: &Vec<u8>) {
         self.handled += 1;
         println!("{:>4} [sys_ex] delta_time: {}, event: {}", self.handled, delta_time, event);
-        // self.advance_time(delta_time);
+        self.advance_time(delta_time);
     }
 
     fn track_change(&mut self) {
@@ -120,8 +122,8 @@ impl ghakuf::reader::Handler for Handler {
 fn main() {
     let mut handler = Handler::new();
     {
-        //let path = std::path::Path::new("midis/Mario-Sheet-Music-Overworld-Main-Theme.mid");
-        let path = std::path::Path::new("midis/corneria.mid");
+        let path = std::path::Path::new("midis/Mario-Sheet-Music-Overworld-Main-Theme.mid");
+        // let path = std::path::Path::new("midis/corneria.mid");
         let mut midi_reader = ghakuf::reader::Reader::new(
             &mut handler,
             &path,
@@ -167,9 +169,8 @@ fn main() {
 
         let note = Step(played.note as f32);
         let duration = scale_time(played.duration());
-        let deadline = now + duration;
 
-        beeper.beep_until(note, deadline);
+        beeper.beep(note, duration);
         println!("[{}] beep at {:?} for {:?}", played.channel, note.to_letter_octave(), duration);
     }
 }
