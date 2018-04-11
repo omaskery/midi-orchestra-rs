@@ -62,7 +62,6 @@ impl Beeper {
                 match rx_beep.try_recv() {
                     Ok(beep) => {
                         current_beep = Some(beep);
-                        println!("beeping: {}", current_beep.unwrap().frequency);
                     },
                     _ => {},
                 }
@@ -72,35 +71,41 @@ impl Beeper {
                     _ => None,
                 };
 
-                if let Some(beep) = current_beep {
-                    match stream_data {
-                        cpal::StreamData::Output { buffer: cpal::UnknownTypeOutputBuffer::U16(mut buffer) } => {
-                            for sample in buffer.chunks_mut(format.channels as usize) {
-                                let value = ((next_value(beep.frequency) * 0.5 + 0.5) * std::u16::MAX as f32) as u16;
-                                for out in sample.iter_mut() {
-                                    *out = value;
-                                }
+                let mut value_calc = || {
+                    if let Some(beep) = current_beep {
+                        next_value(beep.frequency)
+                    } else {
+                        0.0
+                    }
+                };
+
+                match stream_data {
+                    cpal::StreamData::Output { buffer: cpal::UnknownTypeOutputBuffer::U16(mut buffer) } => {
+                        for sample in buffer.chunks_mut(format.channels as usize) {
+                            let value = ((value_calc() * 0.5 + 0.5) * std::u16::MAX as f32) as u16;
+                            for out in sample.iter_mut() {
+                                *out = value;
                             }
-                        },
-                        cpal::StreamData::Output { buffer: cpal::UnknownTypeOutputBuffer::I16(mut buffer) } => {
-                            for sample in buffer.chunks_mut(format.channels as usize) {
-                                let value = (next_value(beep.frequency) * std::i16::MAX as f32) as i16;
-                                for out in sample.iter_mut() {
-                                    *out = value;
-                                }
+                        }
+                    },
+                    cpal::StreamData::Output { buffer: cpal::UnknownTypeOutputBuffer::I16(mut buffer) } => {
+                        for sample in buffer.chunks_mut(format.channels as usize) {
+                            let value = (value_calc() * std::i16::MAX as f32) as i16;
+                            for out in sample.iter_mut() {
+                                *out = value;
                             }
-                        },
-                        cpal::StreamData::Output { buffer: cpal::UnknownTypeOutputBuffer::F32(mut buffer) } => {
-                            for sample in buffer.chunks_mut(format.channels as usize) {
-                                let value = next_value(beep.frequency);
-                                for out in sample.iter_mut() {
-                                    *out = value;
-                                }
+                        }
+                    },
+                    cpal::StreamData::Output { buffer: cpal::UnknownTypeOutputBuffer::F32(mut buffer) } => {
+                        for sample in buffer.chunks_mut(format.channels as usize) {
+                            let value = value_calc();
+                            for out in sample.iter_mut() {
+                                *out = value;
                             }
-                        },
-                        _ => {},
-                    };
-                }
+                        }
+                    },
+                    _ => {},
+                };
             });
         });
 
@@ -112,8 +117,12 @@ impl Beeper {
     }
 
     pub fn beep<H: Into<Hz>>(&self, frequency: H, duration: Duration) {
-        let frequency = frequency.into().0;
         let deadline = Instant::now() + duration;
+        self.beep_until(frequency, deadline);
+    }
+
+    pub fn beep_until<H: Into<Hz>>(&self, frequency: H, deadline: Instant) {
+        let frequency = frequency.into().0;
 
         self.tx_beep.send(Beep {
             frequency,
