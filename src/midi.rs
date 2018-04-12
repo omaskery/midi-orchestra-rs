@@ -20,6 +20,12 @@ pub fn load_midi<P: AsRef<Path>>(path: P) -> (f64, Vec<MusicalEvent>) {
     (handler.get_division(), handler.into_music())
 }
 
+#[derive(Copy, Clone)]
+struct StartOfNote {
+    start: u64,
+    velocity: u8,
+}
+
 #[derive(Debug, Eq, PartialEq, Hash)]
 pub enum MusicalEvent {
     PlayNote {
@@ -27,6 +33,7 @@ pub enum MusicalEvent {
         note: u8,
         start: u64,
         duration: u64,
+        velocity: u8,
     },
     ChangeTempo {
         new_tempo: u32,
@@ -43,7 +50,7 @@ pub struct Handler {
     handled: u64,
     division: f64,
     current_time: u64,
-    book_keeping: HashMap<(u8, u8), u64>,
+    book_keeping: HashMap<(u8, u8), StartOfNote>,
     music: PriorityQueue<MusicalEvent, u64>,
 }
 
@@ -87,22 +94,26 @@ impl Handler {
         }, self.current_time);
     }
 
-    fn note_begun(&mut self, channel: u8, note: u8) {
+    fn note_begun(&mut self, channel: u8, note: u8, velocity: u8) {
         let key = (channel, note);
-        self.book_keeping.insert(key, self.current_time);
+        self.book_keeping.insert(key, StartOfNote {
+            start: self.current_time,
+            velocity,
+        });
     }
 
     fn note_ended(&mut self, channel: u8, note: u8) {
         let key = (channel, note);
         if self.book_keeping.contains_key(&key) {
-            let start = *self.book_keeping.get(&key).unwrap();
+            let start_of_note = *self.book_keeping.get(&key).unwrap();
             let played = MusicalEvent::PlayNote {
                 note,
                 channel,
-                start,
-                duration: self.current_time - start,
+                start: start_of_note.start,
+                duration: self.current_time - start_of_note.start,
+                velocity: start_of_note.velocity,
             };
-            self.music.push(played, start);
+            self.music.push(played, start_of_note.start);
             self.book_keeping.remove(&key);
         }
     }
@@ -153,7 +164,7 @@ impl ghakuf::reader::Handler for Handler {
         match event {
             &MidiEvent::NoteOn { ch, note, velocity } => {
                 if velocity != 0 {
-                    self.note_begun(ch, note);
+                    self.note_begun(ch, note, velocity);
                 } else {
                     self.note_ended(ch, note);
                 }

@@ -72,10 +72,11 @@ fn main() {
         }
 
         match event {
-            MusicalEvent::PlayNote { channel, note, duration, .. } => {
+            MusicalEvent::PlayNote { channel, note, duration, velocity, .. } => {
                 let note = Step(note as f32);
                 let duration = clocks_to_duration(&timing, duration);
-                beeper.beep(note, duration);
+                let volume = velocity as f32 / 128.0;
+                beeper.beep(note, duration, volume);
                 println!("[{}] beep at {:?} for {:?}", channel, note.to_letter_octave(), duration);
             },
             MusicalEvent::ChangeTempo { new_tempo, .. } => {
