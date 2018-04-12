@@ -101,6 +101,8 @@ fn server() {
         seconds_to_duration(seconds)
     };
 
+    let mut connection_index = 0;
+
     println!("starting playback!");
     let mut latest_note_end_time = Instant::now();
     for event in music {
@@ -136,13 +138,14 @@ fn server() {
 
                 let c = connections.lock()
                     .expect("failed to lock mutex to send note");
-                for client in c.iter() {
+                if let Some(client) = c.iter().nth(connection_index) {
                     serialize_into(client, &Packet::PlayNote {
                         duration: duration_to_nanoseconds(duration),
                         frequency: note.to_hz().0,
                         volume,
                     }).expect("failed to send note packet");
                 }
+                connection_index = (connection_index + 1) % c.len();
             },
             MusicalEvent::ChangeTempo { new_tempo, .. } => {
                 println!("tempo changed to {}", new_tempo);
