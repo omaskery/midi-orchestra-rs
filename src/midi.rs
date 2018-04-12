@@ -96,6 +96,9 @@ impl Handler {
 
     fn note_begun(&mut self, channel: u8, note: u8, velocity: u8) {
         let key = (channel, note);
+        if self.book_keeping.contains_key(&key) {
+            self.note_ended(channel, note);
+        }
         self.book_keeping.insert(key, StartOfNote {
             start: self.current_time,
             velocity,
