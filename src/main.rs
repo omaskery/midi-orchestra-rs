@@ -45,9 +45,7 @@ fn main() {
     let clocks_to_duration = |timing: &Timing, clocks: u64| {
         let seconds_per_quarter_note = timing.microseconds_per_quarter_note / 1_000_000.0;
         let seconds_per_tick = seconds_per_quarter_note / timing.ticks_per_quarter_note;
-        // let bar_length = timing.time_signature_numerator  * seconds_per_quarter_note * 4.0 / timing.time_signature_denominator;
         let seconds = clocks as f64 * seconds_per_tick;
-        // let seconds = ((clocks as f64) * 2.2) / 1_000.0;
         seconds_to_duration(seconds)
     };
 
