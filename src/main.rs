@@ -1,5 +1,8 @@
 extern crate priority_queue;
+#[macro_use]
+extern crate serde_derive;
 extern crate pitch_calc;
+extern crate bincode;
 extern crate ghakuf;
 extern crate sample;
 extern crate synth;
@@ -8,9 +11,13 @@ extern crate rodio;
 mod beep;
 mod midi;
 
+use std::net::{TcpListener, TcpStream};
 use std::time::{Duration, Instant};
-use std::thread::sleep;
-use pitch_calc::Step;
+use std::thread::{sleep, spawn};
+use std::sync::{Arc, Mutex};
+
+use bincode::{serialize_into, deserialize_from};
+use pitch_calc::{Step, Hz};
 
 use midi::MusicalEvent;
 use beep::Beeper;
@@ -24,14 +31,59 @@ struct Timing {
     time_signature_denominator: f64,
 }
 
+#[derive(Serialize, Deserialize, PartialEq, Debug)]
+enum Packet {
+    PlayNote {
+        duration: u64,
+        frequency: f32,
+        volume: f32,
+    },
+    TerminateAfter(u64),
+}
+
 fn main() {
-    let path = std::env::args()
+    let mode = std::env::args()
         .nth(1)
+        .expect("mode expected (server or client)");
+
+    match mode.as_str() {
+        "server" => server(),
+        "client" => client(),
+        _ => {},
+    }
+}
+
+fn server() {
+    let path = std::env::args()
+        .nth(2)
         .expect("no midi path provided");
 
+    let listener = TcpListener::bind("0.0.0.0:8000")
+        .expect("unable to create TCP server");
+
+    let connections = Arc::new(Mutex::new(Vec::new()));
+
+    let connections_clone = connections.clone();
+    spawn(move || {
+        for stream in listener.incoming() {
+            match stream {
+                Ok(s) => {
+                    let mut c = connections_clone.lock()
+                        .expect("failed to acquire mutex while accepting");
+                    c.push(s);
+                    println!("connection {}", c.len());
+                },
+                Err(e) => panic!("IO error while listening: {}", e),
+            }
+        }
+    });
+
+    println!("loading midi...");
     let (division, music) = midi::load_midi(path);
 
-    let beeper = Beeper::new();
+    let delay_period = Duration::from_secs(5);
+    println!("waiting {:?} seconds for clients to connect...", delay_period);
+    sleep(delay_period);
 
     let mut last_offset = 0;
     let mut last_note = Instant::now();
@@ -49,6 +101,7 @@ fn main() {
         seconds_to_duration(seconds)
     };
 
+    println!("starting playback!");
     let mut latest_note_end_time = Instant::now();
     for event in music {
         let start = match &event {
@@ -79,8 +132,17 @@ fn main() {
                 if end_time >= latest_note_end_time {
                     latest_note_end_time = end_time;
                 }
-                beeper.beep(note, duration, volume);
                 println!("[{}] beep at {:?} for {:?}", channel, note.to_letter_octave(), duration);
+
+                let c = connections.lock()
+                    .expect("failed to lock mutex to send note");
+                for client in c.iter() {
+                    serialize_into(client, &Packet::PlayNote {
+                        duration: duration_to_nanoseconds(duration),
+                        frequency: note.to_hz().0,
+                        volume,
+                    }).expect("failed to send note packet");
+                }
             },
             MusicalEvent::ChangeTempo { new_tempo, .. } => {
                 println!("tempo changed to {}", new_tempo);
@@ -97,8 +159,48 @@ fn main() {
     }
 
     let now = Instant::now();
-    if now < latest_note_end_time {
-        sleep(latest_note_end_time - now);
+    let terminate_delay = if now < latest_note_end_time {
+        duration_to_nanoseconds(latest_note_end_time - now)
+    } else {
+        0
+    };
+
+    let c = connections.lock()
+        .expect("failed to lock mutex for terminate packet");
+    for client in c.iter() {
+        serialize_into(client, &Packet::TerminateAfter(
+            terminate_delay
+        )).expect("failed to serialize termination packet");
+    }
+
+    println!("done");
+}
+
+fn client() {
+    let target = std::env::args()
+        .nth(2)
+        .expect("no target host string provided");
+
+    println!("connecting to {}...", target);
+    let client = TcpStream::connect(target)
+        .expect("failed to connect to host");
+
+    let beeper = Beeper::new();
+
+    println!("awaiting commands...");
+    loop {
+        let packet: Packet = deserialize_from(&client)
+            .expect("failed to deserialise packet");
+
+        match packet {
+            Packet::PlayNote { duration, frequency, volume } => {
+                beeper.beep(Hz(frequency), nanoseconds_to_duration(duration), volume);
+            },
+            Packet::TerminateAfter(duration) => {
+                sleep(nanoseconds_to_duration(duration));
+                break;
+            }
+        }
     }
 }
 
@@ -116,3 +218,6 @@ fn nanoseconds_to_duration(mut nanoseconds: u64) -> Duration {
     Duration::new(seconds, nanoseconds as u32)
 }
 
+fn duration_to_nanoseconds(duration: Duration) -> u64 {
+    (duration.as_secs() * ONE_SECOND_NS) + duration.subsec_nanos() as u64
+}

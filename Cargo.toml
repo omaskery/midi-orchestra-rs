@@ -1,12 +1,16 @@
 [package]
 name = "midi-orchestra-rs"
 version = "0.1.0"
-authors = ["omask"]
+authors = ["omaskery"]
 
 [dependencies]
+serde = "1.0.27"
 pitch_calc = "0.11.1"
 priority-queue = "0.4"
 ghakuf = "0.5.1"
 rodio = "0.6.0"
 synth = "0.11.0"
 sample = "0.9.1"
+bincode = "1.0.0"
+serde_bytes = "0.10.3"
+serde_derive = "1.0.27"
