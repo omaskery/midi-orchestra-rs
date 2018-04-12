@@ -32,6 +32,11 @@ pub enum MusicalEvent {
         new_tempo: u32,
         start: u64,
     },
+    ChangeTimeSignature {
+        numerator: u8,
+        denominator_exponent: u8,
+        start: u64,
+    },
 }
 
 pub struct Handler {
@@ -70,6 +75,14 @@ impl Handler {
     fn set_tempo(&mut self, new_tempo: u32) {
         self.music.push(MusicalEvent::ChangeTempo {
             new_tempo,
+            start: self.current_time,
+        }, self.current_time);
+    }
+
+    fn set_time_signature(&mut self, numerator: u8, denominator_exponent: u8) {
+        self.music.push(MusicalEvent::ChangeTimeSignature {
+            numerator,
+            denominator_exponent,
             start: self.current_time,
         }, self.current_time);
     }
@@ -116,6 +129,16 @@ impl ghakuf::reader::Handler for Handler {
                     println!("{:>4} [meta] delta_time: {}, event: {}, data: {:?} - data length isn't 3!?", self.handled, delta_time, event, data);
                 }
             },
+            &MetaEvent::TimeSignature => {
+                if data.len() == 4 {
+                    let numerator = data[0];
+                    let denominator_exponent = data[1];
+                    self.set_time_signature(numerator, denominator_exponent);
+                    println!("{:>4} [meta] delta_time: {}, time signature: {}/2^{} ({:?})", self.handled, delta_time, numerator, denominator_exponent, data);
+                } else {
+                    println!("{:>4} [meta] delta_time: {}, event: {}, data: {:?} - data length isn't 4!?", self.handled, delta_time, event, data);
+                }
+            }
             _ => {
                 println!("{:>4} [meta] delta_time: {}, event: {}, data: {:?}", self.handled, delta_time, event, data);
             },

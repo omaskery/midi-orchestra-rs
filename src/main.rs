@@ -17,9 +17,17 @@ use beep::Beeper;
 
 const ONE_SECOND_NS: u64 = 1_000_000_000;
 
+struct Timing {
+    ticks_per_quarter_note: f64,
+    microseconds_per_quarter_note: f64,
+    time_signature_numerator: f64,
+    time_signature_denominator: f64,
+}
+
 fn main() {
-    // let path = std::path::Path::new("midis/Mario-Sheet-Music-Overworld-Main-Theme.mid");
-    let path = std::path::Path::new("midis/main-theme.mid");
+    let path = std::env::args()
+        .nth(1)
+        .expect("no midi path provided");
 
     let (division, music) = midi::load_midi(path);
 
@@ -27,21 +35,30 @@ fn main() {
 
     let mut last_offset = 0;
     let mut last_note = Instant::now();
-    let mut tempo = 500_000f64;
+    let mut timing = Timing {
+        ticks_per_quarter_note: division,
+        microseconds_per_quarter_note: 500_000.0,
+        time_signature_numerator: 4.0,
+        time_signature_denominator: 4.0,
+    };
 
-    let clocks_to_duration = |tempo: f64, clocks: u64| {
-        // let seconds = (60 * clocks) as f64 / (tempo * division);
-        let seconds = ((clocks as f64) * 2.2) / 1_000.0;
+    let clocks_to_duration = |timing: &Timing, clocks: u64| {
+        let seconds_per_quarter_note = timing.microseconds_per_quarter_note / 1_000_000.0;
+        let seconds_per_tick = seconds_per_quarter_note / timing.ticks_per_quarter_note;
+        // let bar_length = timing.time_signature_numerator  * seconds_per_quarter_note * 4.0 / timing.time_signature_denominator;
+        let seconds = clocks as f64 * seconds_per_tick;
+        // let seconds = ((clocks as f64) * 2.2) / 1_000.0;
         seconds_to_duration(seconds)
     };
 
     for event in music {
         let start = match &event {
-            &MusicalEvent::ChangeTempo { start, .. } => start,
             &MusicalEvent::PlayNote { start, .. } => start,
+            &MusicalEvent::ChangeTempo { start, .. } => start,
+            &MusicalEvent::ChangeTimeSignature { start, .. } => start,
         };
         let clocks = start - last_offset;
-        let event_offset = clocks_to_duration(tempo, clocks);
+        let event_offset = clocks_to_duration(&timing, clocks);
         last_offset = start;
 
         let event_time = last_note + event_offset;
@@ -55,15 +72,22 @@ fn main() {
         }
 
         match event {
-            MusicalEvent::ChangeTempo { new_tempo, .. } => {
-                println!("tempo changed to {}", new_tempo);
-                tempo = new_tempo as f64;
-            },
             MusicalEvent::PlayNote { channel, note, duration, .. } => {
                 let note = Step(note as f32);
-                let duration = clocks_to_duration(tempo, duration);
+                let duration = clocks_to_duration(&timing, duration);
                 beeper.beep(note, duration);
                 println!("[{}] beep at {:?} for {:?}", channel, note.to_letter_octave(), duration);
+            },
+            MusicalEvent::ChangeTempo { new_tempo, .. } => {
+                println!("tempo changed to {}", new_tempo);
+                timing.microseconds_per_quarter_note = new_tempo as f64;
+            },
+            MusicalEvent::ChangeTimeSignature { numerator, denominator_exponent, .. } => {
+                let numerator = numerator as f64;
+                let denominator = 2.0f64.powf(denominator_exponent as f64);
+                println!("time signature changed to {}/{}", numerator as u32, denominator as u32);
+                timing.time_signature_numerator = numerator as f64;
+                timing.time_signature_denominator = denominator;
             },
         }
     }
