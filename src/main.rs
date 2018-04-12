@@ -49,6 +49,7 @@ fn main() {
         seconds_to_duration(seconds)
     };
 
+    let mut latest_note_end_time = Instant::now();
     for event in music {
         let start = match &event {
             &MusicalEvent::PlayNote { start, .. } => start,
@@ -74,6 +75,10 @@ fn main() {
                 let note = Step(note as f32);
                 let duration = clocks_to_duration(&timing, duration);
                 let volume = velocity as f32 / 128.0;
+                let end_time = now + duration;
+                if end_time >= latest_note_end_time {
+                    latest_note_end_time = end_time;
+                }
                 beeper.beep(note, duration, volume);
                 println!("[{}] beep at {:?} for {:?}", channel, note.to_letter_octave(), duration);
             },
@@ -89,6 +94,11 @@ fn main() {
                 timing.time_signature_denominator = denominator;
             },
         }
+    }
+
+    let now = Instant::now();
+    if now < latest_note_end_time {
+        sleep(latest_note_end_time - now);
     }
 }
 
