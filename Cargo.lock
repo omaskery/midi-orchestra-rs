@@ -204,6 +204,7 @@ version = "0.1.0"
 dependencies = [
  "ghakuf 0.5.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "pitch_calc 0.11.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "priority-queue 0.4.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "rodio 0.6.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "sample 0.9.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "synth 0.11.0 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -311,6 +312,11 @@ dependencies = [
 ]
 
 [[package]]
+name = "ordermap"
+version = "0.3.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[[package]]
 name = "panning"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -336,6 +342,14 @@ dependencies = [
 name = "pkg-config"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[[package]]
+name = "priority-queue"
+version = "0.4.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+dependencies = [
+ "ordermap 0.3.5 (registry+https://github.com/rust-lang/crates.io-index)",
+]
 
 [[package]]
 name = "rand"
@@ -509,10 +523,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 "checksum num-traits 0.2.2 (registry+https://github.com/rust-lang/crates.io-index)" = "dee092fcdf725aee04dd7da1d21debff559237d49ef1cb3e69bcb8ece44c7364"
 "checksum ogg 0.4.1 (registry+https://github.com/rust-lang/crates.io-index)" = "013b78ceb7fb82555a2f8a95d8e40866fe64a5d15b83c51b3e1fdd40cd903ed3"
 "checksum ole32-sys 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)" = "5d2c49021782e5233cd243168edfa8037574afed4eba4bbaf538b3d8d1789d8c"
+"checksum ordermap 0.3.5 (registry+https://github.com/rust-lang/crates.io-index)" = "a86ed3f5f244b372d6b1a00b72ef7f8876d0bc6a78a4c9985c53614041512063"
 "checksum panning 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)" = "3654ebe7d2302a4627f2687c40cabab6126b09f9704998ceee6a089ff88cf1e0"
 "checksum petgraph 0.2.10 (registry+https://github.com/rust-lang/crates.io-index)" = "3418aea32729bb24e3751c3893aa18f829a804f5030af2e9395c47c9b38f9535"
 "checksum pitch_calc 0.11.1 (registry+https://github.com/rust-lang/crates.io-index)" = "62a4fe4bc5e28312afef25e60cb10dc006dd376db75174d3f260a9cc343224bf"
 "checksum pkg-config 0.3.9 (registry+https://github.com/rust-lang/crates.io-index)" = "3a8b4c6b8165cd1a1cd4b9b120978131389f64bdaf456435caa41e630edba903"
+"checksum priority-queue 0.4.5 (registry+https://github.com/rust-lang/crates.io-index)" = "92b8fd5b954ee9ef398e5b915140d8025f1407bd6942980348e4c96933cb4047"
 "checksum rand 0.3.22 (registry+https://github.com/rust-lang/crates.io-index)" = "15a732abf9d20f0ad8eeb6f909bf6868722d9a06e1e50802b6a70351f40b4eb1"
 "checksum rand 0.4.2 (registry+https://github.com/rust-lang/crates.io-index)" = "eba5f8cb59cc50ed56be8880a5c7b496bfd9bd26394e176bc67884094145c2c5"
 "checksum redox_syscall 0.1.37 (registry+https://github.com/rust-lang/crates.io-index)" = "0d92eecebad22b767915e4d529f89f28ee96dbbf5a4810d2b844373f136417fd"

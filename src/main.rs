@@ -1,3 +1,4 @@
+extern crate priority_queue;
 extern crate pitch_calc;
 extern crate ghakuf;
 extern crate sample;
@@ -6,51 +7,69 @@ extern crate rodio;
 
 mod beep;
 
-use std::collections::HashMap;
-use pitch_calc::Step;
 use std::time::{Duration, Instant};
+use priority_queue::PriorityQueue;
+use std::collections::HashMap;
 use ghakuf::messages::*;
 use std::thread::sleep;
+use pitch_calc::Step;
 
 use beep::Beeper;
 
-#[derive(Debug)]
-pub struct PlayedNote {
-    channel: u8,
-    note: u8,
-    start: u64,
-    end: u64,
-}
+const ONE_SECOND_NS: u64 = 1_000_000_000;
 
-impl PlayedNote {
-    pub fn duration(&self) -> u64 {
-        self.end - self.start
-    }
+#[derive(Debug, Eq, PartialEq, Hash)]
+pub enum MusicalEvent {
+    PlayNote {
+        channel: u8,
+        note: u8,
+        start: u64,
+        duration: u64,
+    },
+    ChangeTempo {
+        new_tempo: u32,
+        start: u64,
+    },
 }
 
 pub struct Handler {
     handled: u64,
+    division: f64,
     current_time: u64,
     book_keeping: HashMap<(u8, u8), u64>,
-    notes: Vec<PlayedNote>,
+    music: PriorityQueue<MusicalEvent, u64>,
 }
 
 impl Handler {
     pub fn new() -> Self {
         Self {
             handled: 0,
+            division: 0f64,
             current_time: 0,
             book_keeping: HashMap::new(),
-            notes: Vec::new(),
+            music: PriorityQueue::new(),
         }
     }
 
-    pub fn into_notes(self) -> Vec<PlayedNote> {
-        self.notes
+    pub fn get_division(&self) -> f64 {
+        self.division
+    }
+
+    pub fn into_music(self) -> Vec<MusicalEvent> {
+        let mut music = self.music.into_sorted_vec();
+        music.reverse();
+        music
     }
 
     fn advance_time(&mut self, delta_time: u32) {
         self.current_time += delta_time as u64;
+    }
+
+    fn set_tempo(&mut self, new_tempo: u32) {
+        self.music.push(MusicalEvent::ChangeTempo {
+            new_tempo,
+            start: self.current_time,
+        }, self.current_time);
     }
 
     fn note_begun(&mut self, channel: u8, note: u8) {
@@ -62,13 +81,13 @@ impl Handler {
         let key = (channel, note);
         if self.book_keeping.contains_key(&key) {
             let start = *self.book_keeping.get(&key).unwrap();
-            let played = PlayedNote {
+            let played = MusicalEvent::PlayNote {
                 note,
                 channel,
                 start,
-                end: self.current_time,
+                duration: self.current_time - start,
             };
-            self.notes.push(played);
+            self.music.push(played, start);
             self.book_keeping.remove(&key);
         }
     }
@@ -77,13 +96,29 @@ impl Handler {
 impl ghakuf::reader::Handler for Handler {
     fn header(&mut self, format: u16, track: u16, time_base: u16) {
         self.handled += 1;
+        self.division = time_base as f64;
         println!("{:>4} [header] format: {}, track: {}, time_base: {}", self.handled, format, track, time_base);
     }
 
-    fn meta_event(&mut self, delta_time: u32, event: &MetaEvent, _data: &Vec<u8>) {
+    fn meta_event(&mut self, delta_time: u32, event: &MetaEvent, data: &Vec<u8>) {
         self.handled += 1;
-        println!("{:>4} [meta] delta_time: {}, event: {}", self.handled, delta_time, event);
-        // self.advance_time(delta_time);
+        match event {
+            &MetaEvent::SetTempo => {
+                if data.len() == 3 {
+                    let tempo = ((data[0] as u32) << 16)
+                        | ((data[1] as u32) << 8)
+                        | (data[2] as u32);
+                    self.set_tempo(tempo);
+                    println!("{:>4} [meta] delta_time: {}, tempo: {} ({:?})", self.handled, delta_time, tempo, data);
+                } else {
+                    println!("{:>4} [meta] delta_time: {}, event: {}, data: {:?} - data length isn't 3!?", self.handled, delta_time, event, data);
+                }
+            },
+            _ => {
+                println!("{:>4} [meta] delta_time: {}, event: {}, data: {:?}", self.handled, delta_time, event, data);
+            },
+        }
+        self.advance_time(delta_time);
     }
 
     fn midi_event(&mut self, delta_time: u32, event: &MidiEvent) {
@@ -107,15 +142,16 @@ impl ghakuf::reader::Handler for Handler {
         }
     }
 
-    fn sys_ex_event(&mut self, delta_time: u32, event: &SysExEvent, _data: &Vec<u8>) {
+    fn sys_ex_event(&mut self, delta_time: u32, event: &SysExEvent, data: &Vec<u8>) {
         self.handled += 1;
-        println!("{:>4} [sys_ex] delta_time: {}, event: {}", self.handled, delta_time, event);
+        println!("{:>4} [sys_ex] delta_time: {}, event: {}, data: {:?}", self.handled, delta_time, event, data);
         self.advance_time(delta_time);
     }
 
     fn track_change(&mut self) {
         self.handled += 1;
-        println!("{:>4} [track_change]", self.handled);
+        println!("{:>4} [track_change] resetting current time", self.handled);
+        self.current_time = 0;
     }
 }
 
@@ -131,47 +167,67 @@ fn main() {
 
         let _ = midi_reader.read();
     }
-    let notes = handler.into_notes();
+
+    let division = handler.get_division();
+    let music = handler.into_music();
 
     let beeper = Beeper::new();
-    let scale_time = |t: u64| {
-        Duration::from_millis(t / 8)
+
+    let mut last_offset = 0;
+    let mut last_note = Instant::now();
+    let mut tempo = 500_000f64;
+
+    let clocks_to_duration = |tempo: f64, clocks: u64| {
+        // let seconds = (60 * clocks) as f64 / (tempo * division);
+        let seconds = ((clocks as f64) / 8.0) / 1_000.0;
+        seconds_to_duration(seconds)
     };
 
-    let min_channel = notes.iter().map(|p| p.channel).min();
-    let max_channel = notes.iter().map(|p| p.channel).max();
-    match (min_channel, max_channel) {
-        (Some(min), Some(max)) => {
-            for channel in min..(max + 1) {
-                let notes_in_channel = notes.iter()
-                    .filter(|p| p.channel == channel)
-                    .collect::<Vec<_>>();
-                if notes_in_channel.len() > 0 {
-                    let count = notes_in_channel.len();
-                    let start = notes_in_channel[0].start;
-                    println!("{} notes in channel {} - starts at {:?}", count, channel, scale_time(start));
-                }
-            }
-        },
-        _ => {},
-    }
+    for event in music {
+        let start = match &event {
+            &MusicalEvent::ChangeTempo { start, .. } => start,
+            &MusicalEvent::PlayNote { start, .. } => start,
+        };
+        let clocks = start - last_offset;
+        let event_offset = clocks_to_duration(tempo, clocks);
+        last_offset = start;
 
-    let start_time = Instant::now();
-    for played in notes {
-        let note_time = start_time + scale_time(played.start);
+        let event_time = last_note + event_offset;
         let now = Instant::now();
+        last_note += event_offset;
 
-        if now < note_time {
-            let time_until_note = note_time - now;
+        if now < event_time {
+            let time_until_note = event_time - now;
             println!("sleeping for {:?}", time_until_note);
             sleep(time_until_note);
         }
 
-        let note = Step(played.note as f32);
-        let duration = scale_time(played.duration());
-
-        beeper.beep(note, duration);
-        println!("[{}] beep at {:?} for {:?}", played.channel, note.to_letter_octave(), duration);
+        match event {
+            MusicalEvent::ChangeTempo { new_tempo, .. } => {
+                println!("tempo changed to {}", new_tempo);
+                tempo = new_tempo as f64;
+            },
+            MusicalEvent::PlayNote { channel, note, duration, .. } => {
+                let note = Step(note as f32);
+                let duration = clocks_to_duration(tempo, duration);
+                beeper.beep(note, duration);
+                println!("[{}] beep at {:?} for {:?}", channel, note.to_letter_octave(), duration);
+            },
+        }
     }
+}
+
+fn seconds_to_duration(seconds: f64) -> Duration {
+    nanoseconds_to_duration((seconds * (ONE_SECOND_NS as f64)) as u64)
+}
+
+fn nanoseconds_to_duration(mut nanoseconds: u64) -> Duration {
+    let mut seconds = 0;
+    while nanoseconds >= ONE_SECOND_NS {
+        nanoseconds -= ONE_SECOND_NS;
+        seconds += 1;
+    }
+
+    Duration::new(seconds, nanoseconds as u32)
 }
 
