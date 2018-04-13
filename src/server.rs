@@ -32,7 +32,7 @@ impl Connection {
 
 struct SharedState {
     connections: Vec<Connection>,
-    track_assignments: HashMap<u8, usize>,
+    track_assignments: HashMap<usize, usize>,
 }
 
 struct Timing {
@@ -51,6 +51,10 @@ pub fn server(matches: &ArgMatches) {
             return;
         },
     };
+    let included_tracks = match_number_list(matches, "include track", "track");
+    let excluded_tracks = match_number_list(matches, "exclude track", "track");
+    let included_channels = match_number_list(matches, "include channel", "channel");
+    let excluded_channels = match_number_list(matches, "exclude channel", "channel");
 
     let listener = TcpListener::bind(format!("0.0.0.0:{}", port))
         .expect("unable to create TCP server");
@@ -64,6 +68,24 @@ pub fn server(matches: &ArgMatches) {
     let (division, music) = midi::load_midi(path);
 
     let tracks = music.iter()
+        .map(|e| {
+            if let &MusicalEvent::PlayNote { track, .. } = e {
+                Some(track)
+            } else {
+                None
+            }
+        })
+        .filter(|e| e.is_some())
+        .map(|e| e.unwrap())
+        .fold(Vec::new(), |mut acc, track| {
+            if acc.contains(&track) == false {
+                acc.push(track);
+            }
+
+            acc
+        });
+
+    let channels = music.iter()
         .map(|e| {
             if let &MusicalEvent::PlayNote { channel, .. } = e {
                 Some(channel)
@@ -80,6 +102,9 @@ pub fn server(matches: &ArgMatches) {
 
             acc
         });
+
+    println!("tracks: {:?}", tracks);
+    println!("channels: {:?}", channels);
 
     let shared_state = shared_state_original.clone();
     spawn(move || {
@@ -170,7 +195,7 @@ pub fn server(matches: &ArgMatches) {
         }
 
         match event {
-            &MusicalEvent::PlayNote { channel, note, duration, velocity, .. } => {
+            &MusicalEvent::PlayNote { track, channel, note, duration, velocity, .. } => {
                 let note = Step(note as f32);
                 let duration = clocks_to_duration(&timing, duration);
                 let volume = velocity as f32 / 128.0;
@@ -180,16 +205,44 @@ pub fn server(matches: &ArgMatches) {
                 }
                 // println!("[{}] beep at {:?} for {:?}", channel, note.to_letter_octave(), duration);
 
-                let state = shared_state.lock()
-                    .expect("failed to lock mutex to send note");
-                let assigned_connection = *state.track_assignments.get(&channel)
-                    .expect(&format!("no valid track assignment for channel {}?", channel));
-                if let Some(client) = state.connections.iter().nth(assigned_connection) {
-                    client.send( Packet::PlayNote {
-                        duration: duration_to_nanoseconds(duration),
-                        frequency: note.to_hz().0,
-                        volume,
-                    }).expect("failed to send note packet");
+                let mut play_note = true;
+
+                if let &Some(ref channels) = &included_channels {
+                    if channels.contains(&(channel as usize)) == false {
+                        play_note = false;
+                    }
+                }
+
+                if let &Some(ref channels) = &excluded_channels {
+                    if channels.contains(&(channel as usize)) {
+                        play_note = false;
+                    }
+                }
+
+                if let &Some(ref tracks) = &included_tracks {
+                    if tracks.contains(&track) == false {
+                        play_note = false;
+                    }
+                }
+
+                if let &Some(ref tracks) = &excluded_tracks {
+                    if tracks.contains(&track) {
+                        play_note = false;
+                    }
+                }
+
+                if play_note {
+                    let state = shared_state.lock()
+                        .expect("failed to lock mutex to send note");
+                    if let Some(assigned_connection) = state.track_assignments.get(&track) {
+                        if let Some(client) = state.connections.iter().nth(*assigned_connection) {
+                            client.send(Packet::PlayNote {
+                                duration: duration_to_nanoseconds(duration),
+                                frequency: note.to_hz().0,
+                                volume,
+                            }).expect("failed to send note packet");
+                        }
+                    }
                 }
             },
 
@@ -241,7 +294,7 @@ pub fn server(matches: &ArgMatches) {
     println!("done");
 }
 
-fn assign_tracks(tracks: &[u8], connection_count: usize) -> HashMap<u8, usize> {
+fn assign_tracks(tracks: &[usize], connection_count: usize) -> HashMap<usize, usize> {
     let mut result = HashMap::new();
 
     let mut index = 0;
@@ -253,3 +306,15 @@ fn assign_tracks(tracks: &[u8], connection_count: usize) -> HashMap<u8, usize> {
     result
 }
 
+fn match_number_list(matches: &ArgMatches, name: &str, kind: &str) -> Option<Vec<usize>> {
+    let result = matches.values_of(name)
+        .map(
+            |values| values.map(
+                |track| track.parse()
+                    .expect(&format!("invalid {} number", kind)))
+        .collect::<Vec<usize>>());
+
+    println!("{}: {:?}", name, result);
+
+    result
+}

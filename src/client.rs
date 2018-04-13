@@ -23,7 +23,7 @@ pub fn client(matches: &ArgMatches) {
                 Ok(_) => {},
                 Err(e) => {
                     println!("error: {}", e);
-                    sleep(Duration::from_secs(1));
+                    sleep(Duration::from_millis(500));
                 }
             }
 
