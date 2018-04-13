@@ -2,6 +2,7 @@ use convert_duration::*;
 use packet::Packet;
 use beep::Beeper;
 
+use std::time::Duration;
 use std::net::TcpStream;
 use std::thread::sleep;
 use std;
@@ -22,6 +23,7 @@ pub fn client(matches: &ArgMatches) {
                 Ok(_) => {},
                 Err(e) => {
                     println!("error: {}", e);
+                    sleep(Duration::from_secs(1));
                 }
             }
 

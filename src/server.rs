@@ -6,6 +6,7 @@ use midi;
 use std::net::{TcpListener, TcpStream};
 use std::time::{Duration, Instant};
 use std::thread::{sleep, spawn};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::io::Write;
 use std;
@@ -29,6 +30,11 @@ impl Connection {
     }
 }
 
+struct SharedState {
+    connections: Vec<Connection>,
+    track_assignments: HashMap<u8, usize>,
+}
+
 struct Timing {
     ticks_per_quarter_note: f64,
     microseconds_per_quarter_note: f64,
@@ -49,14 +55,39 @@ pub fn server(matches: &ArgMatches) {
     let listener = TcpListener::bind(format!("0.0.0.0:{}", port))
         .expect("unable to create TCP server");
 
-    let connections = Arc::new(Mutex::new(Vec::new()));
+    let shared_state_original = Arc::new(Mutex::new(SharedState {
+        connections: Vec::new(),
+        track_assignments: HashMap::new(),
+    }));
 
-    let connections_clone = connections.clone();
+    println!("loading midi...");
+    let (division, music) = midi::load_midi(path);
+
+    let tracks = music.iter()
+        .map(|e| {
+            if let &MusicalEvent::PlayNote { channel, .. } = e {
+                Some(channel)
+            } else {
+                None
+            }
+        })
+        .filter(|e| e.is_some())
+        .map(|e| e.unwrap())
+        .fold(Vec::new(), |mut acc, channel| {
+            if acc.contains(&channel) == false {
+                acc.push(channel);
+            }
+
+            acc
+        });
+
+    let shared_state = shared_state_original.clone();
     spawn(move || {
+        println!("accepting client connections...");
         for stream in listener.incoming() {
             match stream {
                 Ok(s) => {
-                    let mut c = connections_clone.lock()
+                    let mut state = shared_state_original.lock()
                         .expect("failed to acquire mutex while accepting");
                     let mut connection = Connection {
                         stream: s,
@@ -75,8 +106,12 @@ pub fn server(matches: &ArgMatches) {
                     };
 
                     if okay {
-                        c.push(connection);
-                        println!("connection accepted");
+                        state.connections.push(connection);
+                        state.track_assignments = assign_tracks(&tracks, state.connections.len());
+                        println!("connection accepted - track assignments:");
+                        for (track, assignee) in state.track_assignments.iter() {
+                            println!("\ttrack {} => connection {}", track, assignee);
+                        }
                     } else {
                         println!("connection rejected");
                         connection.send(Packet::TerminateAfter(0))
@@ -91,9 +126,6 @@ pub fn server(matches: &ArgMatches) {
             }
         }
     });
-
-    println!("loading midi...");
-    let (division, music) = midi::load_midi(path);
 
     let delay_period = Duration::from_secs(5);
     println!("waiting {:?} seconds for clients to connect...", delay_period);
@@ -115,8 +147,6 @@ pub fn server(matches: &ArgMatches) {
         seconds_to_duration(seconds)
     };
 
-    let mut connection_index = 0;
-
     println!("starting playback!");
     let mut latest_note_end_time = Instant::now();
     for event in music.iter() {
@@ -135,7 +165,7 @@ pub fn server(matches: &ArgMatches) {
 
         if now < event_time {
             let time_until_note = event_time - now;
-            println!("sleeping for {:?}", time_until_note);
+            // println!("sleeping for {:?}", time_until_note);
             sleep(time_until_note);
         }
 
@@ -148,23 +178,26 @@ pub fn server(matches: &ArgMatches) {
                 if end_time >= latest_note_end_time {
                     latest_note_end_time = end_time;
                 }
-                println!("[{}] beep at {:?} for {:?}", channel, note.to_letter_octave(), duration);
+                // println!("[{}] beep at {:?} for {:?}", channel, note.to_letter_octave(), duration);
 
-                let c = connections.lock()
+                let state = shared_state.lock()
                     .expect("failed to lock mutex to send note");
-                if let Some(client) = c.iter().nth(connection_index) {
+                let assigned_connection = *state.track_assignments.get(&channel)
+                    .expect(&format!("no valid track assignment for channel {}?", channel));
+                if let Some(client) = state.connections.iter().nth(assigned_connection) {
                     client.send( Packet::PlayNote {
                         duration: duration_to_nanoseconds(duration),
                         frequency: note.to_hz().0,
                         volume,
                     }).expect("failed to send note packet");
                 }
-                connection_index = (connection_index + 1) % c.len();
             },
+
             &MusicalEvent::ChangeTempo { new_tempo, .. } => {
                 println!("tempo changed to {}", new_tempo);
                 timing.microseconds_per_quarter_note = new_tempo as f64;
             },
+
             &MusicalEvent::ChangeTimeSignature { numerator, denominator_exponent, .. } => {
                 let numerator = numerator as f64;
                 let denominator = 2.0f64.powf(denominator_exponent as f64);
@@ -182,18 +215,18 @@ pub fn server(matches: &ArgMatches) {
         0
     };
 
-    let mut c = connections.lock()
+    let mut state = shared_state.lock()
         .expect("failed to lock mutex for terminate packet");
 
     println!("telling clients to terminate...");
-    for client in c.iter_mut() {
+    for client in state.connections.iter_mut() {
         client.send( Packet::TerminateAfter(
             terminate_delay
         )).expect("failed to serialize termination packet");
     }
 
     println!("ensuring clients get termination messages...");
-    for client in c.iter_mut() {
+    for client in state.connections.iter_mut() {
         client.stream.flush()
             .expect("failed to flush rejected connection");
         client.stream.shutdown(std::net::Shutdown::Both)
@@ -206,5 +239,17 @@ pub fn server(matches: &ArgMatches) {
     }
 
     println!("done");
+}
+
+fn assign_tracks(tracks: &[u8], connection_count: usize) -> HashMap<u8, usize> {
+    let mut result = HashMap::new();
+
+    let mut index = 0;
+    for track in tracks {
+        result.insert(*track, index);
+        index = (index + 1) % connection_count;
+    }
+
+    result
 }
 
