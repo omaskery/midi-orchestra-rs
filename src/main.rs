@@ -99,6 +99,9 @@ fn server() {
                         stream: s,
                     };
 
+                    connection.stream.set_nodelay(true)
+                        .expect("failed to set connection to be no-delay");
+
                     let info = connection.recv()
                         .expect("failed to receive client info packet");
                     let okay = match info {
@@ -117,6 +120,8 @@ fn server() {
                             .expect("failed to send rejection termination");
                         connection.stream.flush()
                             .expect("failed to flush rejected connection");
+                        connection.stream.shutdown(std::net::Shutdown::Both)
+                            .expect("failed to shutdown rejected connection");
                     }
                 },
                 Err(e) => panic!("IO error while listening: {}", e),
@@ -151,8 +156,8 @@ fn server() {
 
     println!("starting playback!");
     let mut latest_note_end_time = Instant::now();
-    for event in music {
-        let start = match &event {
+    for event in music.iter() {
+        let start = match event {
             &MusicalEvent::PlayNote { start, .. } => start,
             &MusicalEvent::ChangeTempo { start, .. } => start,
             &MusicalEvent::ChangeTimeSignature { start, .. } => start,
@@ -172,7 +177,7 @@ fn server() {
         }
 
         match event {
-            MusicalEvent::PlayNote { channel, note, duration, velocity, .. } => {
+            &MusicalEvent::PlayNote { channel, note, duration, velocity, .. } => {
                 let note = Step(note as f32);
                 let duration = clocks_to_duration(&timing, duration);
                 let volume = velocity as f32 / 128.0;
@@ -193,11 +198,11 @@ fn server() {
                 }
                 connection_index = (connection_index + 1) % c.len();
             },
-            MusicalEvent::ChangeTempo { new_tempo, .. } => {
+            &MusicalEvent::ChangeTempo { new_tempo, .. } => {
                 println!("tempo changed to {}", new_tempo);
                 timing.microseconds_per_quarter_note = new_tempo as f64;
             },
-            MusicalEvent::ChangeTimeSignature { numerator, denominator_exponent, .. } => {
+            &MusicalEvent::ChangeTimeSignature { numerator, denominator_exponent, .. } => {
                 let numerator = numerator as f64;
                 let denominator = 2.0f64.powf(denominator_exponent as f64);
                 println!("time signature changed to {}/{}", numerator as u32, denominator as u32);
@@ -216,14 +221,23 @@ fn server() {
 
     let mut c = connections.lock()
         .expect("failed to lock mutex for terminate packet");
+
+    println!("telling clients to terminate...");
     for client in c.iter_mut() {
         client.send( Packet::TerminateAfter(
             terminate_delay
         )).expect("failed to serialize termination packet");
-        client.stream.flush()
-            .expect("failed to flush client during termination");
     }
 
+    println!("ensuring clients get termination messages...");
+    for client in c.iter_mut() {
+        client.stream.flush()
+            .expect("failed to flush rejected connection");
+        client.stream.shutdown(std::net::Shutdown::Both)
+            .expect("failed to shutdown client during termination");
+    }
+
+    // better safe than sorry!
     if terminate_delay > 0 {
         sleep(nanoseconds_to_duration(terminate_delay));
     }
