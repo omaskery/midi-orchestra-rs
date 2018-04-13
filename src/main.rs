@@ -15,6 +15,7 @@ use std::net::{TcpListener, TcpStream};
 use std::time::{Duration, Instant};
 use std::thread::{sleep, spawn};
 use std::sync::{Arc, Mutex};
+use std::io::Write;
 
 use bincode::{serialize_into, deserialize_from};
 use pitch_calc::{Step, Hz};
@@ -33,12 +34,36 @@ struct Timing {
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
 enum Packet {
+    ClientInfo,
     PlayNote {
         duration: u64,
         frequency: f32,
         volume: f32,
     },
     TerminateAfter(u64),
+}
+
+impl Packet {
+    pub fn is_client_message(&self) -> bool {
+        match self {
+            &Packet::ClientInfo => true,
+            _ => false,
+        }
+    }
+}
+
+struct Connection {
+    stream: TcpStream,
+}
+
+impl Connection {
+    pub fn send(&self, packet: Packet) -> Result<(), Box<bincode::ErrorKind>> {
+        serialize_into(&self.stream, &packet)
+    }
+
+    pub fn recv(&self) -> Result<Packet, Box<bincode::ErrorKind>> {
+        deserialize_from(&self.stream)
+    }
 }
 
 fn main() {
@@ -70,8 +95,29 @@ fn server() {
                 Ok(s) => {
                     let mut c = connections_clone.lock()
                         .expect("failed to acquire mutex while accepting");
-                    c.push(s);
-                    println!("connection {}", c.len());
+                    let mut connection = Connection {
+                        stream: s,
+                    };
+
+                    let info = connection.recv()
+                        .expect("failed to receive client info packet");
+                    let okay = match info {
+                        Packet::ClientInfo => {
+                            true
+                        },
+                        _ => false,
+                    };
+
+                    if okay {
+                        c.push(connection);
+                        println!("connection accepted");
+                    } else {
+                        println!("connection rejected");
+                        connection.send(Packet::TerminateAfter(0))
+                            .expect("failed to send rejection termination");
+                        connection.stream.flush()
+                            .expect("failed to flush rejected connection");
+                    }
                 },
                 Err(e) => panic!("IO error while listening: {}", e),
             }
@@ -139,7 +185,7 @@ fn server() {
                 let c = connections.lock()
                     .expect("failed to lock mutex to send note");
                 if let Some(client) = c.iter().nth(connection_index) {
-                    serialize_into(client, &Packet::PlayNote {
+                    client.send( Packet::PlayNote {
                         duration: duration_to_nanoseconds(duration),
                         frequency: note.to_hz().0,
                         volume,
@@ -168,12 +214,18 @@ fn server() {
         0
     };
 
-    let c = connections.lock()
+    let mut c = connections.lock()
         .expect("failed to lock mutex for terminate packet");
-    for client in c.iter() {
-        serialize_into(client, &Packet::TerminateAfter(
+    for client in c.iter_mut() {
+        client.send( Packet::TerminateAfter(
             terminate_delay
         )).expect("failed to serialize termination packet");
+        client.stream.flush()
+            .expect("failed to flush client during termination");
+    }
+
+    if terminate_delay > 0 {
+        sleep(nanoseconds_to_duration(terminate_delay));
     }
 
     println!("done");
@@ -188,6 +240,11 @@ fn client() {
     let client = TcpStream::connect(target)
         .expect("failed to connect to host");
 
+    println!("sending client info...");
+    let info = Packet::ClientInfo;
+    serialize_into(&client, &info)
+        .expect("failed to send client info");
+
     let beeper = Beeper::new();
 
     println!("awaiting commands...");
@@ -195,14 +252,18 @@ fn client() {
         let packet: Packet = deserialize_from(&client)
             .expect("failed to deserialise packet");
 
-        match packet {
-            Packet::PlayNote { duration, frequency, volume } => {
+        match &packet {
+            &Packet::PlayNote { duration, frequency, volume } => {
                 beeper.beep(Hz(frequency), nanoseconds_to_duration(duration), volume);
+                println!("beep @ {} for {}ns (volume={})", frequency, duration, volume);
             },
-            Packet::TerminateAfter(duration) => {
+            &Packet::TerminateAfter(duration) => {
+                println!("terminating after {}ns", duration);
                 sleep(nanoseconds_to_duration(duration));
                 break;
             }
+            packet if packet.is_client_message() => panic!("received client message from server?"),
+            packet => println!("unhandled packet: {:?}", packet),
         }
     }
 }
