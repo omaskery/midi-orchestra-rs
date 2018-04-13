@@ -7,6 +7,7 @@ extern crate ghakuf;
 extern crate sample;
 extern crate synth;
 extern crate rodio;
+extern crate clap;
 
 mod beep;
 mod midi;
@@ -18,6 +19,7 @@ use std::sync::{Arc, Mutex};
 use std::io::Write;
 
 use bincode::{serialize_into, deserialize_from};
+use clap::{Arg, ArgMatches, App, AppSettings, SubCommand};
 use pitch_calc::{Step, Hz};
 
 use midi::MusicalEvent;
@@ -67,21 +69,32 @@ impl Connection {
 }
 
 fn main() {
-    let mode = std::env::args()
-        .nth(1)
-        .expect("mode expected (server or client)");
+    let matches = App::new("midi-orchestra-rs")
+        .version("0.1")
+        .about("A silly distributed MIDI player nobody asked for or needed!")
+        .author("Oliver Maskery")
+        .setting(AppSettings::SubcommandRequired)
+        .subcommand(SubCommand::with_name("server")
+            .about("reads MIDI files and orchestrates clients to play it")
+            .arg(Arg::with_name("midi")
+                .required(true)
+                .help("path to the midi file to play")))
+        .subcommand(SubCommand::with_name("client")
+            .about("connects to a server and dutifully plays note on command")
+            .arg(Arg::with_name("target")
+                .required(true)
+                .help("hostname and port combination of the server to connect to")))
+        .get_matches();
 
-    match mode.as_str() {
-        "server" => server(),
-        "client" => client(),
-        _ => {},
+    match matches.subcommand() {
+        ("server", Some(matches)) => server(matches),
+        ("client", Some(matches)) => client(matches),
+        (command, _) => panic!("unknown command: {}", command),
     }
 }
 
-fn server() {
-    let path = std::env::args()
-        .nth(2)
-        .expect("no midi path provided");
+fn server(matches: &ArgMatches) {
+    let path = matches.value_of("midi").unwrap();
 
     let listener = TcpListener::bind("0.0.0.0:8000")
         .expect("unable to create TCP server");
@@ -245,10 +258,8 @@ fn server() {
     println!("done");
 }
 
-fn client() {
-    let target = std::env::args()
-        .nth(2)
-        .expect("no target host string provided");
+fn client(matches: &ArgMatches) {
+    let target = matches.value_of("target").unwrap();
 
     println!("connecting to {}...", target);
     let client = TcpStream::connect(target)
