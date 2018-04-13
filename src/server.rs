@@ -38,8 +38,15 @@ struct Timing {
 
 pub fn server(matches: &ArgMatches) {
     let path = matches.value_of("midi").unwrap();
+    let port: u16 = match matches.value_of("port").unwrap().parse() {
+        Ok(value) => value,
+        Err(_) => {
+            println!("invalid port value, must be integer between 0-65535 inclusive");
+            return;
+        },
+    };
 
-    let listener = TcpListener::bind("0.0.0.0:8000")
+    let listener = TcpListener::bind(format!("0.0.0.0:{}", port))
         .expect("unable to create TCP server");
 
     let connections = Arc::new(Mutex::new(Vec::new()));

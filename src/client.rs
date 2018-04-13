@@ -4,29 +4,52 @@ use beep::Beeper;
 
 use std::net::TcpStream;
 use std::thread::sleep;
+use std;
 
 use bincode::{serialize_into, deserialize_from};
 use pitch_calc::Hz;
 use clap::ArgMatches;
 
 pub fn client(matches: &ArgMatches) {
+    let forever: bool = matches.is_present("forever");
+
+    if forever == false {
+        client_impl(matches).ok();
+    } else {
+        println!("running forever...");
+        loop {
+            match client_impl(matches) {
+                Ok(_) => {},
+                Err(e) => {
+                    println!("error: {}", e);
+                }
+            }
+
+            println!("automatically running again!");
+        }
+    }
+}
+
+fn client_impl(matches: &ArgMatches) -> Result<(), Box<std::error::Error>> {
     let target = matches.value_of("target").unwrap();
 
     println!("connecting to {}...", target);
-    let client = TcpStream::connect(target)
-        .expect("failed to connect to host");
+    let client = loop {
+        let result = TcpStream::connect(target);
+        if let Ok(stream) = result {
+            break stream;
+        }
+    };
 
     println!("sending client info...");
     let info = Packet::ClientInfo;
-    serialize_into(&client, &info)
-        .expect("failed to send client info");
+    serialize_into(&client, &info)?;
 
     let beeper = Beeper::new();
 
     println!("awaiting commands...");
     loop {
-        let packet: Packet = deserialize_from(&client)
-            .expect("failed to deserialise packet");
+        let packet: Packet = deserialize_from(&client)?;
 
         match &packet {
             &Packet::PlayNote { duration, frequency, volume } => {
@@ -42,4 +65,6 @@ pub fn client(matches: &ArgMatches) {
             packet => println!("unhandled packet: {:?}", packet),
         }
     }
+
+    Ok(())
 }

@@ -31,12 +31,21 @@ fn main() {
             .about("reads MIDI files and orchestrates clients to play it")
             .arg(Arg::with_name("midi")
                 .required(true)
-                .help("path to the midi file to play")))
+                .help("path to the midi file to play"))
+            .arg(Arg::with_name("port")
+                .short("p")
+                .long("port")
+                .default_value("4000")
+                .help("port to listen for client connections on")))
         .subcommand(SubCommand::with_name("client")
             .about("connects to a server and dutifully plays note on command")
             .arg(Arg::with_name("target")
                 .required(true)
-                .help("hostname and port combination of the server to connect to")))
+                .help("hostname and port combination of the server to connect to"))
+            .arg(Arg::with_name("forever")
+                .short("f")
+                .long("forever")
+                .help("causes client to reconnect forever for unattended operation")))
         .get_matches();
 
     match matches.subcommand() {
