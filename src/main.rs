@@ -46,6 +46,7 @@ fn main() {
         .about("A silly distributed MIDI player nobody asked for or needed!")
         .author("Oliver Maskery")
         .setting(AppSettings::SubcommandRequired)
+
         .subcommand(SubCommand::with_name("server")
             .about("reads MIDI files and orchestrates clients to play it")
             .arg(Arg::with_name("midi")
@@ -79,7 +80,11 @@ fn main() {
                 .value_name("CHANNEL")
                 .multiple(true)
                 .conflicts_with("exclude channel")
-                .help("marks a channel number for inclusion in playback")))
+                .help("marks a channel number for inclusion in playback"))
+            .arg(Arg::with_name("allow channel 10")
+                .long("--allow-channel-10")
+                .help("channel 10 is ignored as percussion, this flag allows channel 10 to play")))
+
         .subcommand(SubCommand::with_name("client")
             .about("connects to a server and dutifully plays note on command")
             .arg(Arg::with_name("target")
@@ -89,6 +94,7 @@ fn main() {
                 .short("f")
                 .long("forever")
                 .help("causes client to reconnect forever for unattended operation")))
+
         .get_matches();
 
     match matches.subcommand() {

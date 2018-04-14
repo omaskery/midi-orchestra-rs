@@ -54,7 +54,7 @@ pub fn server(matches: &ArgMatches) {
     let included_tracks = match_number_list(matches, "include track", "track");
     let excluded_tracks = match_number_list(matches, "exclude track", "track");
     let included_channels = match_number_list(matches, "include channel", "channel");
-    let excluded_channels = match_number_list(matches, "exclude channel", "channel");
+    let mut excluded_channels = match_number_list(matches, "exclude channel", "channel");
 
     let listener = TcpListener::bind(format!("0.0.0.0:{}", port))
         .expect("unable to create TCP server");
@@ -102,6 +102,20 @@ pub fn server(matches: &ArgMatches) {
 
             acc
         });
+
+    if channels.contains(&10) && matches.is_present("allow channel 10") == false {
+        println!("automatically ignoring channel 10");
+        println!("  (set --allow-channel-10 to inhibit this)");
+
+        excluded_channels = excluded_channels
+            .map_or(Some(vec![10]), |mut channels| {
+                if channels.contains(&10) == false {
+                    channels.push(10);
+                }
+
+                Some(channels)
+            });
+    }
 
     println!("tracks: {:?}", tracks);
     println!("channels: {:?}", channels);
