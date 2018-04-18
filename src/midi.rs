@@ -5,8 +5,8 @@ use priority_queue::PriorityQueue;
 use ghakuf::{messages::*, reader::Reader};
 use ghakuf;
 
-pub fn load_midi<P: AsRef<Path>>(path: P) -> (f64, Vec<MusicalEvent>) {
-    let mut handler = Handler::new();
+pub fn load_midi<P: AsRef<Path>>(path: P, verbose: bool) -> (f64, Vec<MusicalEvent>) {
+    let mut handler = Handler::new(verbose);
 
     {
         let mut midi_reader = Reader::new(
@@ -92,6 +92,7 @@ pub enum MusicalEvent {
 }
 
 pub struct Handler {
+    verbose: bool,
     handled: u64,
     division: f64,
     current_time: u64,
@@ -101,8 +102,9 @@ pub struct Handler {
 }
 
 impl Handler {
-    pub fn new() -> Self {
+    pub fn new(verbose: bool) -> Self {
         Self {
+            verbose,
             handled: 0,
             division: 0f64,
             current_time: 0,
@@ -174,7 +176,9 @@ impl ghakuf::reader::Handler for Handler {
     fn header(&mut self, format: u16, track: u16, time_base: u16) {
         self.handled += 1;
         self.division = time_base as f64;
-        println!("{:>4} [header] format: {}, track: {}, time_base: {}", self.handled, format, track, time_base);
+        if self.verbose {
+            println!("{:>4} [header] format: {}, track: {}, time_base: {}", self.handled, format, track, time_base);
+        }
     }
 
     fn meta_event(&mut self, delta_time: u32, event: &MetaEvent, data: &Vec<u8>) {
@@ -212,13 +216,17 @@ impl ghakuf::reader::Handler for Handler {
             }
 
             &MetaEvent::SequenceOrTrackName => {
-                println!("{:>4} [meta] seq/track name: {}", self.handled, slice_to_text(data));
+                if self.verbose {
+                    println!("{:>4} [meta] seq/track name: {}", self.handled, slice_to_text(data));
+                }
             }
 
             &MetaEvent::MIDIChannelPrefix => {
                 if data.len() == 1 {
                     let prefix = data[0];
-                    println!("{:>4} [meta] MIDI channel prefix: {}", self.handled, prefix + 1);
+                    if self.verbose {
+                        println!("{:>4} [meta] MIDI channel prefix: {}", self.handled, prefix + 1);
+                    }
                 } else {
                     println!("{:>4} [meta] event: {}, data: {:?} - data length isn't 1!?", self.handled, event, data);
                 }
@@ -240,7 +248,9 @@ impl ghakuf::reader::Handler for Handler {
             }
 
             _ => {
-                println!("{:>4} [meta] event: {}, data: {:?}", self.handled, event, data);
+                if self.verbose {
+                    println!("{:>4} [meta] event: {}, data: {:?}", self.handled, event, data);
+                }
             },
         }
         self.advance_time(delta_time);
@@ -264,7 +274,9 @@ impl ghakuf::reader::Handler for Handler {
             },
 
             &MidiEvent::ProgramChange { ch, program } => {
-                println!("{:>4} [midi] program change [channel {}]: {} ({:?})", self.handled, ch + 1, program + 1, InstrumentFamily::from_program(program));
+                if self.verbose {
+                    println!("{:>4} [midi] program change [channel {}]: {} ({:?})", self.handled, ch + 1, program + 1, InstrumentFamily::from_program(program));
+                }
             }
 
             &MidiEvent::ControlChange { .. } => {
@@ -276,14 +288,18 @@ impl ghakuf::reader::Handler for Handler {
             },
 
             _ => {
-                println!("{:>4} [midi] event: {}", self.handled, event);
+                if self.verbose {
+                    println!("{:>4} [midi] event: {}", self.handled, event);
+                }
             },
         }
     }
 
     fn sys_ex_event(&mut self, delta_time: u32, event: &SysExEvent, data: &Vec<u8>) {
         self.handled += 1;
-        println!("{:>4} [sys_ex] event: {}, data: {:?}", self.handled, event, data);
+        if self.verbose {
+            println!("{:>4} [sys_ex] event: {}, data: {:?}", self.handled, event, data);
+        }
         self.advance_time(delta_time);
     }
 

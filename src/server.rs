@@ -42,15 +42,8 @@ struct SharedState {
 impl SharedState {
     fn new(music_length: u64) -> Self {
         let width = match term_size::dimensions() {
-            Some((w, _)) => {
-                println!("detected terminal width: {}", w);
-                w
-            },
-            _ => {
-                let default = 80;
-                println!("assuming default terminal width: {}", default);
-                default
-            },
+            Some((w, _)) => w,
+            _ => 80,
         };
 
         let mut progress_bar = ProgressBar::new(music_length);
@@ -85,6 +78,7 @@ pub fn server(matches: &ArgMatches) {
             return;
         },
     };
+    let verbose = matches.is_present("verbose");
     let volume_coefficient: f32 = match matches.value_of("volume").unwrap().parse() {
         Ok(value) => value,
         Err(_) => {
@@ -107,7 +101,7 @@ pub fn server(matches: &ArgMatches) {
         .expect("unable to create TCP server");
 
     println!("loading midi...");
-    let (division, music) = midi::load_midi(path);
+    let (division, music) = midi::load_midi(path, verbose);
 
     let tracks = music.iter()
         .map(|e| {
@@ -212,7 +206,7 @@ pub fn server(matches: &ArgMatches) {
     });
 
     let delay_period = Duration::from_secs(5);
-    println!("waiting {:?} seconds for clients to connect...", delay_period);
+    println!("waiting {} seconds for clients to connect...", duration_to_seconds(delay_period));
     sleep(delay_period);
 
     let mut last_offset = 0;
