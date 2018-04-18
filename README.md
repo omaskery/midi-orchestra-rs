@@ -10,7 +10,45 @@ In the event that playback isn't very pleasing it can sometimes be alleviated by
 
 MIDI conventionally treats channel 10 as percussion which this software doesn't handle very well (partially omitted by design) - the software therefore automatically disables channel 10. To inhibit this behaviour pass --allow-channel-10.
 
-# To do:
+# Examples
+
+## Running the server
+
+Simply running the server:
+
+`midi-orchestra-rs server path/to/music.mid`
+
+Specifying a volume:
+
+`midi-orchestra-rs server path/to/music.mid --volume=0.5`
+
+Excluding a specific channel:
+
+`midi-orchestra-rs server path/to/music.mid --exclude-channel 3`
+
+Excluding a specific track:
+
+`midi-orchestra-rs server path/to/music.mid --exclude-track 5`
+
+Playing **only** a specific channel:
+
+`midi-orchestra-rs server path/to/music.mid --include-channel 3`
+
+Playing **only** a specific track:
+
+`midi-orchestra-rs server path/to/music.mid --include-track 5`
+
+## Running a client
+
+Simply running a client:
+
+`midi-orchestra-rs client localhost:4000`
+
+Running a client 'forever' to avoid having to invoke it after each song:
+
+`midi-orchestra-rs client localhost:4000 --forever`
+
+# To do
 
 - [ ] refactor so that midi code has tempo handling baked in, that way the subsequent systems can just manipulate musical events without constantly juggling time concerns
 - [ ] then, based on that, can use the include/exclude track/channel arguments to simply filter what events go forward into the actual playback loop
