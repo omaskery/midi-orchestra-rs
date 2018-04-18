@@ -2,6 +2,7 @@ extern crate priority_queue;
 #[macro_use]
 extern crate serde_derive;
 extern crate pitch_calc;
+extern crate term_size;
 extern crate bincode;
 extern crate ghakuf;
 extern crate sample;

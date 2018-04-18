@@ -15,6 +15,7 @@ use bincode::{serialize_into, deserialize_from};
 use pbr::ProgressBar;
 use pitch_calc::Step;
 use clap::ArgMatches;
+use term_size;
 use bincode;
 
 struct Connection {
@@ -40,10 +41,19 @@ struct SharedState {
 
 impl SharedState {
     fn new(music_length: u64) -> Self {
-        let width = 80;
+        let width = match term_size::dimensions() {
+            Some((w, _)) => {
+                println!("detected terminal width: {}", w);
+                w
+            },
+            _ => {
+                let default = 80;
+                println!("assuming default terminal width: {}", default);
+                default
+            },
+        };
 
         let mut progress_bar = ProgressBar::new(music_length);
-        progress_bar.set_width(Some(width));
         progress_bar.format("╢▌▌░╟");
 
         Self {
