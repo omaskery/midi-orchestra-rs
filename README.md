@@ -12,8 +12,8 @@ MIDI conventionally treats channel 10 as percussion which this software doesn't 
 
 # To do:
 
-[ ] refactor so that midi code has tempo handling baked in, that way the subsequent systems can just manipulate musical events without constantly juggling time concerns
-[ ] then, based on that, can use the include/exclude track/channel arguments to simply filter what events go forward into the actual playback loop
-[ ] once that's done, look into assigning frequency ranges to clients by placing all notes into a histogram (x-axis = frequency) and giving each client an equal "area under the graph" of adjacent buckets, which should now be possible since all musical events (after filtering) are now available
-[ ] make channel/track filtering collect<>() using hashset or something rather than doing all that contains() checking with a Vec
-[ ] make channel/track filter arguments build hashset of legal tracks/channels and simply check those during note playing rather than obtuse logic around each list being present etc.
+- [ ] refactor so that midi code has tempo handling baked in, that way the subsequent systems can just manipulate musical events without constantly juggling time concerns
+- [ ] then, based on that, can use the include/exclude track/channel arguments to simply filter what events go forward into the actual playback loop
+- [ ] once that's done, look into assigning frequency ranges to clients by placing all notes into a histogram (x-axis = frequency) and giving each client an equal "area under the graph" of adjacent buckets, which should now be possible since all musical events (after filtering) are now available
+- [ ] make channel/track filtering collect<>() using hashset or something rather than doing all that contains() checking with a Vec
+- [ ] make channel/track filter arguments build hashset of legal tracks/channels and simply check those during note playing rather than obtuse logic around each list being present etc.
