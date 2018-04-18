@@ -8,7 +8,7 @@ use std::thread::sleep;
 use std;
 
 use bincode::{serialize_into, deserialize_from};
-use pitch_calc::Hz;
+use pitch_calc::{Hz, LetterOctave};
 use clap::ArgMatches;
 
 pub fn client(matches: &ArgMatches) {
@@ -55,8 +55,12 @@ fn client_impl(matches: &ArgMatches) -> Result<(), Box<std::error::Error>> {
 
         match &packet {
             &Packet::PlayNote { duration, frequency, volume } => {
-                beeper.beep(Hz(frequency), nanoseconds_to_duration(duration), volume);
-                println!("beep @ {} for {}ns (volume={})", frequency, duration, volume);
+                let frequency = Hz(frequency);
+                let duration = nanoseconds_to_duration(duration);
+                beeper.beep(frequency, duration, volume);
+                let LetterOctave(letter, octave) = frequency.to_letter_octave();
+                let duration_ms = (duration_to_seconds(duration) * 1000f64) as u64;
+                println!("beep [{:4} {}] for {:04}ms (volume={:0.2})", format!("{:?},", letter), octave, duration_ms, volume);
             },
             &Packet::TerminateAfter(duration) => {
                 println!("terminating after {}ns", duration);
