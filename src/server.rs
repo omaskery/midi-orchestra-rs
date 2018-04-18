@@ -7,11 +7,12 @@ use std::net::{TcpListener, TcpStream};
 use std::time::{Duration, Instant};
 use std::thread::{sleep, spawn};
 use std::collections::HashMap;
+use std::io::{Stdout, Write};
 use std::sync::{Arc, Mutex};
-use std::io::Write;
 use std;
 
 use bincode::{serialize_into, deserialize_from};
+use pbr::ProgressBar;
 use pitch_calc::Step;
 use clap::ArgMatches;
 use bincode;
@@ -33,6 +34,29 @@ impl Connection {
 struct SharedState {
     connections: Vec<Connection>,
     track_assignments: HashMap<usize, usize>,
+    progress_bar: ProgressBar<Stdout>,
+    width: usize,
+}
+
+impl SharedState {
+    fn new(music_length: u64) -> Self {
+        let width = 80;
+
+        let mut progress_bar = ProgressBar::new(music_length);
+        progress_bar.set_width(Some(width));
+        progress_bar.format("╢▌▌░╟");
+
+        Self {
+            connections: Vec::new(),
+            track_assignments: HashMap::new(),
+            progress_bar,
+            width,
+        }
+    }
+
+    fn print_before(&self, text: &str) {
+        println!("\r{}\r{}", std::iter::repeat(" ").take(self.width).collect::<String>(), text);
+    }
 }
 
 struct Timing {
@@ -58,11 +82,6 @@ pub fn server(matches: &ArgMatches) {
 
     let listener = TcpListener::bind(format!("0.0.0.0:{}", port))
         .expect("unable to create TCP server");
-
-    let shared_state_original = Arc::new(Mutex::new(SharedState {
-        connections: Vec::new(),
-        track_assignments: HashMap::new(),
-    }));
 
     println!("loading midi...");
     let (division, music) = midi::load_midi(path);
@@ -120,6 +139,8 @@ pub fn server(matches: &ArgMatches) {
     println!("tracks: {:?}", tracks);
     println!("channels: {:?}", channels);
 
+    let shared_state_original = Arc::new(Mutex::new(SharedState::new(music.len() as u64)));
+
     let shared_state = shared_state_original.clone();
     spawn(move || {
         println!("accepting client connections...");
@@ -147,12 +168,13 @@ pub fn server(matches: &ArgMatches) {
                     if okay {
                         state.connections.push(connection);
                         state.track_assignments = assign_tracks(&tracks, state.connections.len());
-                        println!("connection accepted - track assignments:");
-                        for (track, assignee) in state.track_assignments.iter() {
-                            println!("\ttrack {} => connection {}", track, assignee);
+                        state.print_before("connection accepted - track assignments:");
+                        let assignments = state.track_assignments.clone();
+                        for (track, assignee) in assignments {
+                            state.print_before(&format!("\ttrack {} => connection {}", track, assignee));
                         }
                     } else {
-                        println!("connection rejected");
+                        state.print_before("connection rejected");
                         connection.send(Packet::TerminateAfter(0))
                             .expect("failed to send rejection termination");
                         connection.stream.flush()
@@ -204,7 +226,11 @@ pub fn server(matches: &ArgMatches) {
 
         if now < event_time {
             let time_until_note = event_time - now;
-            // println!("sleeping for {:?}", time_until_note);
+            {
+                let mut state = shared_state.lock()
+                    .expect("failed to acquire mutex to show sleep time");
+                state.progress_bar.message(&format!("sleep: {:04}ms: ", (duration_to_seconds(time_until_note) * 1000f64) as u64));
+            }
             sleep(time_until_note);
         }
 
@@ -217,6 +243,7 @@ pub fn server(matches: &ArgMatches) {
                 if end_time >= latest_note_end_time {
                     latest_note_end_time = end_time;
                 }
+
                 // println!("[{}] beep at {:?} for {:?}", channel, note.to_letter_octave(), duration);
 
                 let mut play_note = true;
@@ -261,19 +288,28 @@ pub fn server(matches: &ArgMatches) {
             },
 
             &MusicalEvent::ChangeTempo { new_tempo, .. } => {
-                println!("tempo changed to {}", new_tempo);
                 timing.microseconds_per_quarter_note = new_tempo as f64;
             },
 
             &MusicalEvent::ChangeTimeSignature { numerator, denominator_exponent, .. } => {
                 let numerator = numerator as f64;
                 let denominator = 2.0f64.powf(denominator_exponent as f64);
-                println!("time signature changed to {}/{}", numerator as u32, denominator as u32);
                 timing.time_signature_numerator = numerator as f64;
                 timing.time_signature_denominator = denominator;
             },
         }
+
+        {
+            let mut state = shared_state.lock()
+                .expect("failed to acquire mutex to update progress bar");
+            state.progress_bar.inc();
+        }
     }
+
+    let mut state = shared_state.lock()
+        .expect("failed to lock mutex for shutdown processes");
+
+    state.progress_bar.finish_println("playback complete\n");
 
     let now = Instant::now();
     let terminate_delay = if now < latest_note_end_time {
@@ -281,9 +317,6 @@ pub fn server(matches: &ArgMatches) {
     } else {
         0
     };
-
-    let mut state = shared_state.lock()
-        .expect("failed to lock mutex for terminate packet");
 
     println!("telling clients to terminate...");
     for client in state.connections.iter_mut() {

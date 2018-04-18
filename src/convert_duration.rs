@@ -19,3 +19,8 @@ pub fn nanoseconds_to_duration(mut nanoseconds: u64) -> Duration {
 pub fn duration_to_nanoseconds(duration: Duration) -> u64 {
     (duration.as_secs() * ONE_SECOND_NS) + duration.subsec_nanos() as u64
 }
+
+pub fn duration_to_seconds(duration: Duration) -> f64 {
+    let ns = duration_to_nanoseconds(duration);
+    ns as f64 / ONE_SECOND_NS as f64
+}

@@ -8,6 +8,7 @@ extern crate sample;
 extern crate synth;
 extern crate rodio;
 extern crate clap;
+extern crate pbr;
 
 mod convert_duration;
 mod packet;
