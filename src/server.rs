@@ -75,6 +75,19 @@ pub fn server(matches: &ArgMatches) {
             return;
         },
     };
+    let volume_coefficient: f32 = match matches.value_of("volume").unwrap().parse() {
+        Ok(value) => value,
+        Err(_) => {
+            println!("invalid volume value, must be floating point number");
+            return;
+        },
+    };
+
+    if volume_coefficient < 0.0 || volume_coefficient > 1.0 {
+        println!("invalid volume value, must be between 0.0 and 1.0");
+        return;
+    }
+
     let included_tracks = match_number_list(matches, "include track", "track");
     let excluded_tracks = match_number_list(matches, "exclude track", "track");
     let included_channels = match_number_list(matches, "include channel", "channel");
@@ -238,7 +251,7 @@ pub fn server(matches: &ArgMatches) {
             &MusicalEvent::PlayNote { track, channel, note, duration, velocity, .. } => {
                 let note = Step(note as f32);
                 let duration = clocks_to_duration(&timing, duration);
-                let volume = velocity as f32 / 128.0;
+                let volume = (velocity as f32 / 128.0) * volume_coefficient;
                 let end_time = now + duration;
                 if end_time >= latest_note_end_time {
                     latest_note_end_time = end_time;

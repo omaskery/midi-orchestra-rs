@@ -38,8 +38,6 @@ use client::client;
 //       - make channel/track filter arguments build hashset of legal
 //         tracks/channels and simply check those during note playing rather
 //         than obtuse logic around each list being present etc.
-//       - automatically add channel 10 (defacto percussion) to exclude list,
-//         but add a flag to disable this in CLI
 
 fn main() {
     let matches = App::new("midi-orchestra-rs")
@@ -58,6 +56,11 @@ fn main() {
                 .long("port")
                 .default_value("4000")
                 .help("port to listen for client connections on"))
+            .arg(Arg::with_name("volume")
+                .short("v")
+                .long("volume")
+                .default_value("1.0")
+                .help("coefficient to multiply note volumes by"))
             .arg(Arg::with_name("exclude track")
                 .long("exclude-track")
                 .value_name("TRACK")
