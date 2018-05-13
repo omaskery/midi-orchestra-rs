@@ -1,11 +1,39 @@
 use std::collections::HashMap;
+use std::time::Duration;
 use std::path::Path;
 
 use priority_queue::PriorityQueue;
-use ghakuf::{messages::*, reader::Reader};
+use ghakuf::{messages, messages::{MetaEvent, SysExEvent}, reader::Reader};
 use ghakuf;
 
-pub fn load_midi<P: AsRef<Path>>(path: P, verbose: bool) -> (f64, Vec<MusicalEvent>) {
+use convert_duration::seconds_to_duration;
+
+#[derive(Clone, Debug)]
+pub struct Timing {
+    pub ticks_per_quarter_note: f64,
+    pub microseconds_per_quarter_note: f64,
+    pub time_signature_numerator: f64,
+    pub time_signature_denominator: f64,
+}
+
+pub fn clocks_to_duration(timing: &Timing, clocks: Ticks) -> Duration {
+    let seconds_per_quarter_note = timing.microseconds_per_quarter_note / 1_000_000.0;
+    let seconds_per_tick = seconds_per_quarter_note / timing.ticks_per_quarter_note;
+    let seconds = clocks.0 as f64 * seconds_per_tick;
+    seconds_to_duration(seconds)
+}
+
+pub struct Music {
+    events: Vec<MusicalEvent>,
+}
+
+impl Music {
+    pub fn events(&self) -> &[MusicalEvent] {
+        &self.events
+    }
+}
+
+pub fn load_midi<P: AsRef<Path>>(path: P, verbose: bool) -> Music {
     let mut handler = Handler::new(verbose);
 
     {
@@ -17,12 +45,99 @@ pub fn load_midi<P: AsRef<Path>>(path: P, verbose: bool) -> (f64, Vec<MusicalEve
         let _ = midi_reader.read();
     }
 
-    (handler.get_division(), handler.into_music())
+    let division = handler.get_division();
+    let midi = handler.into_music();
+
+    let mut last_start_tick = Ticks(0);
+    let mut offset_of_last_event = Duration::new(0, 0);
+    let mut timing = Timing {
+        ticks_per_quarter_note: division,
+        microseconds_per_quarter_note: 500_000.0,
+        time_signature_numerator: 4.0,
+        time_signature_denominator: 4.0,
+    };
+
+    let mut events = Vec::new();
+
+    for event in midi {
+        let start_tick = match event {
+            MidiEvent::PlayNote { start, .. } => start,
+            MidiEvent::ChangeTempo { start, .. } => start,
+            MidiEvent::ChangeTimeSignature { start, .. } => start,
+        };
+
+        let delta_ticks = Ticks(start_tick.0 - last_start_tick.0);
+        let delta_time = clocks_to_duration(&timing, delta_ticks);
+        last_start_tick = start_tick;
+
+        let start_offset = offset_of_last_event + delta_time;
+        offset_of_last_event = start_offset;
+
+        match event {
+            MidiEvent::PlayNote { track, channel, note, duration, velocity, .. } => {
+                let duration = clocks_to_duration(&timing, duration);
+                events.push(MusicalEvent::PlayNote(Note {
+                    start_offset,
+                    track,
+                    channel,
+                    note,
+                    duration,
+                    velocity,
+                }));
+            },
+            MidiEvent::ChangeTempo { new_tempo, .. } => {
+                timing.microseconds_per_quarter_note = new_tempo as f64;
+                events.push(MusicalEvent::TimingChange(TimingChange {
+                    start_offset,
+                    timing: timing.clone(),
+                }));
+            },
+            MidiEvent::ChangeTimeSignature { numerator, denominator_exponent, .. } => {
+                let numerator = numerator as f64;
+                let denominator = 2.0f64.powf(denominator_exponent as f64);
+                timing.time_signature_numerator = numerator as f64;
+                timing.time_signature_denominator = denominator;
+                events.push(MusicalEvent::TimingChange(TimingChange {
+                    start_offset,
+                    timing: timing.clone(),
+                }));
+            },
+        }
+    }
+
+    Music {
+        events,
+    }
+}
+
+#[derive(Copy, Clone, Debug, Ord, PartialOrd, Eq, PartialEq, Hash)]
+pub struct Ticks(u64);
+
+#[derive(Clone, Debug)]
+pub struct Note {
+    pub start_offset: Duration,
+    pub channel: u8,
+    pub track: usize,
+    pub note: u8,
+    pub duration: Duration,
+    pub velocity: u8,
+}
+
+#[derive(Clone, Debug)]
+pub struct TimingChange {
+    pub start_offset: Duration,
+    pub timing: Timing,
+}
+
+#[derive(Clone, Debug)]
+pub enum MusicalEvent {
+    PlayNote(Note),
+    TimingChange(TimingChange),
 }
 
 #[derive(Copy, Clone)]
 struct StartOfNote {
-    start: u64,
+    start: Ticks,
     velocity: u8,
 }
 
@@ -71,23 +186,23 @@ impl InstrumentFamily {
 }
 
 #[derive(Debug, Eq, PartialEq, Hash)]
-pub enum MusicalEvent {
+pub enum MidiEvent {
     PlayNote {
         track: usize,
         channel: u8,
         note: u8,
-        start: u64,
-        duration: u64,
+        start: Ticks,
+        duration: Ticks,
         velocity: u8,
     },
     ChangeTempo {
         new_tempo: u32,
-        start: u64,
+        start: Ticks,
     },
     ChangeTimeSignature {
         numerator: u8,
         denominator_exponent: u8,
-        start: u64,
+        start: Ticks,
     },
 }
 
@@ -95,10 +210,10 @@ pub struct Handler {
     verbose: bool,
     handled: u64,
     division: f64,
-    current_time: u64,
+    current_time: Ticks,
     current_track: usize,
     book_keeping: HashMap<(u8, u8), StartOfNote>,
-    music: PriorityQueue<MusicalEvent, u64>,
+    events: PriorityQueue<MidiEvent, Ticks>,
 }
 
 impl Handler {
@@ -107,10 +222,10 @@ impl Handler {
             verbose,
             handled: 0,
             division: 0f64,
-            current_time: 0,
+            current_time: Ticks(0),
             current_track: 0,
             book_keeping: HashMap::new(),
-            music: PriorityQueue::new(),
+            events: PriorityQueue::new(),
         }
     }
 
@@ -118,25 +233,25 @@ impl Handler {
         self.division
     }
 
-    pub fn into_music(self) -> Vec<MusicalEvent> {
-        let mut music = self.music.into_sorted_vec();
+    pub fn into_music(self) -> Vec<MidiEvent> {
+        let mut music = self.events.into_sorted_vec();
         music.reverse();
         music
     }
 
     fn advance_time(&mut self, delta_time: u32) {
-        self.current_time += delta_time as u64;
+        self.current_time = Ticks(self.current_time.0 + delta_time as u64);
     }
 
     fn set_tempo(&mut self, new_tempo: u32) {
-        self.music.push(MusicalEvent::ChangeTempo {
+        self.events.push(MidiEvent::ChangeTempo {
             new_tempo,
             start: self.current_time,
         }, self.current_time);
     }
 
     fn set_time_signature(&mut self, numerator: u8, denominator_exponent: u8) {
-        self.music.push(MusicalEvent::ChangeTimeSignature {
+        self.events.push(MidiEvent::ChangeTimeSignature {
             numerator,
             denominator_exponent,
             start: self.current_time,
@@ -158,15 +273,15 @@ impl Handler {
         let key = (channel, note);
         if self.book_keeping.contains_key(&key) {
             let start_of_note = *self.book_keeping.get(&key).unwrap();
-            let played = MusicalEvent::PlayNote {
+            let played = MidiEvent::PlayNote {
                 track: self.current_track,
                 note,
                 channel: channel + 1, // remember that from in MIDI channels are 1-indexed
                 start: start_of_note.start,
-                duration: self.current_time - start_of_note.start,
+                duration: Ticks(self.current_time.0 - start_of_note.start.0),
                 velocity: start_of_note.velocity,
             };
-            self.music.push(played, start_of_note.start);
+            self.events.push(played, start_of_note.start);
             self.book_keeping.remove(&key);
         }
     }
@@ -256,12 +371,12 @@ impl ghakuf::reader::Handler for Handler {
         self.advance_time(delta_time);
     }
 
-    fn midi_event(&mut self, delta_time: u32, event: &MidiEvent) {
+    fn midi_event(&mut self, delta_time: u32, event: &messages::MidiEvent) {
         self.handled += 1;
         self.advance_time(delta_time);
 
         match event {
-            &MidiEvent::NoteOn { ch, note, velocity } => {
+            &messages::MidiEvent::NoteOn { ch, note, velocity } => {
                 if velocity != 0 {
                     self.note_begun(ch, note, velocity);
                 } else {
@@ -269,21 +384,21 @@ impl ghakuf::reader::Handler for Handler {
                 }
             }
 
-            &MidiEvent::NoteOff { ch, note, .. } => {
+            &messages::MidiEvent::NoteOff { ch, note, .. } => {
                 self.note_ended(ch, note);
             },
 
-            &MidiEvent::ProgramChange { ch, program } => {
+            &messages::MidiEvent::ProgramChange { ch, program } => {
                 if self.verbose {
                     println!("{:>4} [midi] program change [channel {}]: {} ({:?})", self.handled, ch + 1, program + 1, InstrumentFamily::from_program(program));
                 }
             }
 
-            &MidiEvent::ControlChange { .. } => {
+            &messages::MidiEvent::ControlChange { .. } => {
                 // currently don't care about this
             },
 
-            &MidiEvent::PitchBendChange { .. } => {
+            &messages::MidiEvent::PitchBendChange { .. } => {
                 // currently don't care about this
             },
 
@@ -306,7 +421,7 @@ impl ghakuf::reader::Handler for Handler {
     fn track_change(&mut self) {
         self.handled += 1;
         // println!("{:>4} [track_change] resetting current time", self.handled);
-        self.current_time = 0;
+        self.current_time = Ticks(0);
         self.current_track += 1;
     }
 }

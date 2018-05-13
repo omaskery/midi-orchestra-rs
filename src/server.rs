@@ -1,5 +1,5 @@
+use midi::{MusicalEvent, Note, TimingChange};
 use convert_duration::*;
-use midi::MusicalEvent;
 use packet::Packet;
 use midi;
 
@@ -62,13 +62,6 @@ impl SharedState {
     }
 }
 
-struct Timing {
-    ticks_per_quarter_note: f64,
-    microseconds_per_quarter_note: f64,
-    time_signature_numerator: f64,
-    time_signature_denominator: f64,
-}
-
 pub fn server(matches: &ArgMatches) {
     let path = matches.value_of("midi").unwrap();
     let port: u16 = match matches.value_of("port").unwrap().parse() {
@@ -101,18 +94,16 @@ pub fn server(matches: &ArgMatches) {
         .expect("unable to create TCP server");
 
     println!("loading midi...");
-    let (division, music) = midi::load_midi(path, verbose);
+    let music = midi::load_midi(path, verbose);
 
-    let tracks = music.iter()
-        .map(|e| {
-            if let &MusicalEvent::PlayNote { track, .. } = e {
+    let tracks = music.events().iter()
+        .filter_map(|e| {
+            if let &MusicalEvent::PlayNote(Note { track, .. }) = e {
                 Some(track)
             } else {
                 None
             }
         })
-        .filter(|e| e.is_some())
-        .map(|e| e.unwrap())
         .fold(Vec::new(), |mut acc, track| {
             if acc.contains(&track) == false {
                 acc.push(track);
@@ -121,16 +112,14 @@ pub fn server(matches: &ArgMatches) {
             acc
         });
 
-    let channels = music.iter()
-        .map(|e| {
-            if let &MusicalEvent::PlayNote { channel, .. } = e {
+    let channels = music.events().iter()
+        .filter_map(|e| {
+            if let &MusicalEvent::PlayNote(Note { channel, .. }) = e {
                 Some(channel)
             } else {
                 None
             }
         })
-        .filter(|e| e.is_some())
-        .map(|e| e.unwrap())
         .fold(Vec::new(), |mut acc, channel| {
             if acc.contains(&channel) == false {
                 acc.push(channel);
@@ -156,7 +145,7 @@ pub fn server(matches: &ArgMatches) {
     println!("tracks: {:?}", tracks);
     println!("channels: {:?}", channels);
 
-    let shared_state_original = Arc::new(Mutex::new(SharedState::new(music.len() as u64)));
+    let shared_state_original = Arc::new(Mutex::new(SharedState::new(music.events().len() as u64)));
 
     let shared_state = shared_state_original.clone();
     spawn(move || {
@@ -209,37 +198,17 @@ pub fn server(matches: &ArgMatches) {
     println!("waiting {} seconds for clients to connect...", duration_to_seconds(delay_period));
     sleep(delay_period);
 
-    let mut last_offset = 0;
-    let mut last_note = Instant::now();
-    let mut timing = Timing {
-        ticks_per_quarter_note: division,
-        microseconds_per_quarter_note: 500_000.0,
-        time_signature_numerator: 4.0,
-        time_signature_denominator: 4.0,
-    };
-
-    let clocks_to_duration = |timing: &Timing, clocks: u64| {
-        let seconds_per_quarter_note = timing.microseconds_per_quarter_note / 1_000_000.0;
-        let seconds_per_tick = seconds_per_quarter_note / timing.ticks_per_quarter_note;
-        let seconds = clocks as f64 * seconds_per_tick;
-        seconds_to_duration(seconds)
-    };
-
     println!("starting playback!");
     let mut latest_note_end_time = Instant::now();
-    for event in music.iter() {
-        let start = match event {
-            &MusicalEvent::PlayNote { start, .. } => start,
-            &MusicalEvent::ChangeTempo { start, .. } => start,
-            &MusicalEvent::ChangeTimeSignature { start, .. } => start,
+    let start_time = Instant::now();
+    for event in music.events().iter() {
+        let start_offset = match event {
+            MusicalEvent::PlayNote(Note { start_offset, .. }) => start_offset,
+            MusicalEvent::TimingChange(TimingChange { start_offset, .. }) => start_offset,
         };
-        let clocks = start - last_offset;
-        let event_offset = clocks_to_duration(&timing, clocks);
-        last_offset = start;
 
-        let event_time = last_note + event_offset;
         let now = Instant::now();
-        last_note += event_offset;
+        let event_time = start_time + *start_offset;
 
         if now < event_time {
             let time_until_note = event_time - now;
@@ -252,11 +221,10 @@ pub fn server(matches: &ArgMatches) {
         }
 
         match event {
-            &MusicalEvent::PlayNote { track, channel, note, duration, velocity, .. } => {
-                let note = Step(note as f32);
-                let duration = clocks_to_duration(&timing, duration);
-                let volume = (velocity as f32 / 128.0) * volume_coefficient;
-                let end_time = now + duration;
+            MusicalEvent::PlayNote(Note { track, channel, note, duration, velocity, .. }) => {
+                let note = Step(*note as f32);
+                let volume = (*velocity as f32 / 128.0) * volume_coefficient;
+                let end_time = now + *duration;
                 if end_time >= latest_note_end_time {
                     latest_note_end_time = end_time;
                 }
@@ -266,13 +234,13 @@ pub fn server(matches: &ArgMatches) {
                 let mut play_note = true;
 
                 if let &Some(ref channels) = &included_channels {
-                    if channels.contains(&(channel as usize)) == false {
+                    if channels.contains(&(*channel as usize)) == false {
                         play_note = false;
                     }
                 }
 
                 if let &Some(ref channels) = &excluded_channels {
-                    if channels.contains(&(channel as usize)) {
+                    if channels.contains(&(*channel as usize)) {
                         play_note = false;
                     }
                 }
@@ -295,7 +263,7 @@ pub fn server(matches: &ArgMatches) {
                     if let Some(assigned_connection) = state.track_assignments.get(&track) {
                         if let Some(client) = state.connections.iter().nth(*assigned_connection) {
                             client.send(Packet::PlayNote {
-                                duration: duration_to_nanoseconds(duration),
+                                duration: duration_to_nanoseconds(*duration),
                                 frequency: note.to_hz().0,
                                 volume,
                             }).expect("failed to send note packet");
@@ -304,15 +272,8 @@ pub fn server(matches: &ArgMatches) {
                 }
             },
 
-            &MusicalEvent::ChangeTempo { new_tempo, .. } => {
-                timing.microseconds_per_quarter_note = new_tempo as f64;
-            },
-
-            &MusicalEvent::ChangeTimeSignature { numerator, denominator_exponent, .. } => {
-                let numerator = numerator as f64;
-                let denominator = 2.0f64.powf(denominator_exponent as f64);
-                timing.time_signature_numerator = numerator as f64;
-                timing.time_signature_denominator = denominator;
+            MusicalEvent::TimingChange(_timing_change) => {
+                // we could emit timing information here, but we won't :)
             },
         }
 
