@@ -21,7 +21,45 @@ use clap::ArgMatches;
 use term_size;
 use bincode;
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+struct ClientUID(usize);
+
+trait ClientSelectionPolicy: Send {
+    fn on_clients_changed(&mut self, clients: &[ClientInfo]);
+    fn select_clients(&self, note: &Note) -> Vec<ClientUID>;
+}
+
+struct BroadcastPolicy {
+    all: Vec<ClientUID>,
+}
+
+impl ClientSelectionPolicy for BroadcastPolicy {
+    fn on_clients_changed(&mut self, clients: &[ClientInfo]) {
+        self.all = clients.iter()
+            .map(|c| c.uid)
+            .collect();
+    }
+    fn select_clients(&self, _note: &Note) -> Vec<ClientUID> {
+        self.all.clone()
+    }
+}
+
+fn select_policy(name: String) -> Option<Box<ClientSelectionPolicy>> {
+    match name.to_lowercase().as_str() {
+        "broadcast" => Some(Box::new(BroadcastPolicy {
+            all: Vec::new()
+        })),
+        _ => None,
+    }
+}
+
+#[derive(Clone, Debug)]
+struct ClientInfo {
+    uid: ClientUID,
+}
+
 struct Connection {
+    info: ClientInfo,
     stream: TcpStream,
 }
 
@@ -37,13 +75,13 @@ impl Connection {
 
 struct SharedState {
     connections: Vec<Connection>,
-    track_assignments: HashMap<usize, usize>,
     progress_bar: ProgressBar<Stdout>,
     width: usize,
+    policy: Box<ClientSelectionPolicy>,
 }
 
 impl SharedState {
-    fn new(music_length: u64) -> Self {
+    fn new(music_length: u64, policy: Box<ClientSelectionPolicy>) -> Self {
         let width = match term_size::dimensions() {
             Some((w, _)) => w,
             _ => 80,
@@ -54,9 +92,9 @@ impl SharedState {
 
         Self {
             connections: Vec::new(),
-            track_assignments: HashMap::new(),
             progress_bar,
             width,
+            policy,
         }
     }
 
@@ -95,6 +133,8 @@ pub fn server(matches: &ArgMatches) {
 
     let listener = TcpListener::bind(format!("0.0.0.0:{}", port))
         .expect("unable to create TCP server");
+
+    let policy = select_policy("broadcast".to_string()).expect("invalid policy");
 
     println!("loading midi...");
     let music = midi::load_midi(path, verbose);
@@ -163,19 +203,26 @@ pub fn server(matches: &ArgMatches) {
         })
         .collect::<Vec<_>>();
 
-    let shared_state_original = Arc::new(Mutex::new(SharedState::new(music.events().len() as u64)));
+    let shared_state_original = Arc::new(Mutex::new(
+        SharedState::new(music.events().len() as u64, policy)
+    ));
 
     let shared_state = shared_state_original.clone();
     spawn(move || {
         println!("accepting client connections...");
+        let mut next_id = ClientUID(1);
         for stream in listener.incoming() {
             match stream {
                 Ok(s) => {
                     let mut state = shared_state_original.lock()
                         .expect("failed to acquire mutex while accepting");
                     let mut connection = Connection {
+                        info: ClientInfo {
+                            uid: next_id,
+                        },
                         stream: s,
                     };
+                    next_id = ClientUID(next_id.0 + 1);
 
                     connection.stream.set_nodelay(true)
                         .expect("failed to set connection to be no-delay");
@@ -191,12 +238,11 @@ pub fn server(matches: &ArgMatches) {
 
                     if okay {
                         state.connections.push(connection);
-                        state.track_assignments = assign_tracks(&tracks, state.connections.len());
-                        state.print_before("connection accepted - track assignments:");
-                        let assignments = state.track_assignments.clone();
-                        for (track, assignee) in assignments {
-                            state.print_before(&format!("\ttrack {} => connection {}", track, assignee));
-                        }
+                        state.print_before("connection accepted");
+                        let clients_info = state.connections.iter()
+                            .map(|c| c.info.clone())
+                            .collect::<Vec<_>>();
+                        state.policy.on_clients_changed(&clients_info);
                     } else {
                         state.print_before("connection rejected");
                         connection.send(Packet::TerminateAfter(0))
@@ -239,21 +285,24 @@ pub fn server(matches: &ArgMatches) {
         }
 
         match event {
-            MusicalEvent::PlayNote(Note { track, note, duration, velocity, .. }) => {
-                let note = Step(*note as f32);
-                let volume = (*velocity as f32 / 128.0) * volume_coefficient;
-                let end_time = now + *duration;
+            MusicalEvent::PlayNote(note) => {
+                let midi_note = Step(note.note as f32);
+                let volume = (note.velocity as f32 / 128.0) * volume_coefficient;
+                let end_time = now + note.duration;
                 if end_time >= latest_note_end_time {
                     latest_note_end_time = end_time;
                 }
 
                 let state = shared_state.lock()
                     .expect("failed to lock mutex to send note");
-                if let Some(assigned_connection) = state.track_assignments.get(&track) {
-                    if let Some(client) = state.connections.iter().nth(*assigned_connection) {
-                        client.send(Packet::PlayNote {
-                            duration: duration_to_nanoseconds(*duration),
-                            frequency: note.to_hz().0,
+
+                let assigned_connections = state.policy.select_clients(&note);
+
+                for connection in state.connections.iter() {
+                    if assigned_connections.contains(&connection.info.uid) {
+                        connection.send(Packet::PlayNote {
+                            duration: duration_to_nanoseconds(note.duration),
+                            frequency: midi_note.to_hz().0,
                             volume,
                         }).expect("failed to send note packet");
                     }
