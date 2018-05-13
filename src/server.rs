@@ -3,12 +3,15 @@ use convert_duration::*;
 use packet::Packet;
 use midi;
 
+use std::collections::{HashMap, HashSet};
 use std::net::{TcpListener, TcpStream};
 use std::time::{Duration, Instant};
 use std::thread::{sleep, spawn};
-use std::collections::HashMap;
 use std::io::{Stdout, Write};
 use std::sync::{Arc, Mutex};
+use std::str::FromStr;
+use std::hash::Hash;
+use std::fmt::Debug;
 use std;
 
 use bincode::{serialize_into, deserialize_from};
@@ -85,10 +88,10 @@ pub fn server(matches: &ArgMatches) {
         return;
     }
 
-    let included_tracks = match_number_list(matches, "include track", "track");
-    let excluded_tracks = match_number_list(matches, "exclude track", "track");
-    let included_channels = match_number_list(matches, "include channel", "channel");
-    let mut excluded_channels = match_number_list(matches, "exclude channel", "channel");
+    let included_tracks = number_list_to_hashset::<usize>(matches, "include track", "track");
+    let excluded_tracks = number_list_to_hashset::<usize>(matches, "exclude track", "track");
+    let included_channels = number_list_to_hashset::<u8>(matches, "include channel", "channel");
+    let excluded_channels = number_list_to_hashset::<u8>(matches, "exclude channel", "channel");
 
     let listener = TcpListener::bind(format!("0.0.0.0:{}", port))
         .expect("unable to create TCP server");
@@ -104,13 +107,7 @@ pub fn server(matches: &ArgMatches) {
                 None
             }
         })
-        .fold(Vec::new(), |mut acc, track| {
-            if acc.contains(&track) == false {
-                acc.push(track);
-            }
-
-            acc
-        });
+        .collect::<HashSet<_>>();
 
     let channels = music.events().iter()
         .filter_map(|e| {
@@ -120,30 +117,51 @@ pub fn server(matches: &ArgMatches) {
                 None
             }
         })
-        .fold(Vec::new(), |mut acc, channel| {
-            if acc.contains(&channel) == false {
-                acc.push(channel);
-            }
+        .collect::<HashSet<_>>();
 
-            acc
-        });
+    let tracks_before_filtering = tracks.clone();
+    let channels_before_filtering = channels.clone();
 
+    let mut excluded_channels = excluded_channels;
     if channels.contains(&10) && matches.is_present("allow channel 10") == false {
         println!("automatically ignoring channel 10");
         println!("  (set --allow-channel-10 to inhibit this)");
 
-        excluded_channels = excluded_channels
-            .map_or(Some(vec![10]), |mut channels| {
-                if channels.contains(&10) == false {
-                    channels.push(10);
-                }
-
-                Some(channels)
-            });
+        excluded_channels.insert(10);
     }
+    let excluded_channels = excluded_channels;
 
-    println!("tracks: {:?}", tracks);
-    println!("channels: {:?}", channels);
+    let channels = channels.difference(&excluded_channels)
+        .map(|v| *v)
+        .collect::<HashSet<u8>>();
+    let channels = channels.union(&included_channels)
+        .map(|v| *v)
+        .collect::<HashSet<u8>>();
+
+    let tracks = tracks.difference(&excluded_tracks)
+        .map(|v| *v)
+        .collect::<HashSet<usize>>();
+    let tracks = tracks.union(&included_tracks)
+        .map(|v| *v)
+        .collect::<HashSet<usize>>();
+
+    println!("tracks:");
+    println!("  {:?}", tracks_before_filtering);
+    println!("  {:?}", tracks);
+    println!("channels:");
+    println!("  {:?}", channels_before_filtering);
+    println!("  {:?}", channels);
+
+    let events_to_play = music.events().iter()
+        .filter(|e| {
+            match e {
+                MusicalEvent::PlayNote(Note { track, channel, .. }) => {
+                    tracks.contains(track) && channels.contains(channel)
+                },
+                _ => true,
+            }
+        })
+        .collect::<Vec<_>>();
 
     let shared_state_original = Arc::new(Mutex::new(SharedState::new(music.events().len() as u64)));
 
@@ -201,7 +219,7 @@ pub fn server(matches: &ArgMatches) {
     println!("starting playback!");
     let mut latest_note_end_time = Instant::now();
     let start_time = Instant::now();
-    for event in music.events().iter() {
+    for event in events_to_play.iter() {
         let start_offset = match event {
             MusicalEvent::PlayNote(Note { start_offset, .. }) => start_offset,
             MusicalEvent::TimingChange(TimingChange { start_offset, .. }) => start_offset,
@@ -221,7 +239,7 @@ pub fn server(matches: &ArgMatches) {
         }
 
         match event {
-            MusicalEvent::PlayNote(Note { track, channel, note, duration, velocity, .. }) => {
+            MusicalEvent::PlayNote(Note { track, note, duration, velocity, .. }) => {
                 let note = Step(*note as f32);
                 let volume = (*velocity as f32 / 128.0) * volume_coefficient;
                 let end_time = now + *duration;
@@ -229,45 +247,15 @@ pub fn server(matches: &ArgMatches) {
                     latest_note_end_time = end_time;
                 }
 
-                // println!("[{}] beep at {:?} for {:?}", channel, note.to_letter_octave(), duration);
-
-                let mut play_note = true;
-
-                if let &Some(ref channels) = &included_channels {
-                    if channels.contains(&(*channel as usize)) == false {
-                        play_note = false;
-                    }
-                }
-
-                if let &Some(ref channels) = &excluded_channels {
-                    if channels.contains(&(*channel as usize)) {
-                        play_note = false;
-                    }
-                }
-
-                if let &Some(ref tracks) = &included_tracks {
-                    if tracks.contains(&track) == false {
-                        play_note = false;
-                    }
-                }
-
-                if let &Some(ref tracks) = &excluded_tracks {
-                    if tracks.contains(&track) {
-                        play_note = false;
-                    }
-                }
-
-                if play_note {
-                    let state = shared_state.lock()
-                        .expect("failed to lock mutex to send note");
-                    if let Some(assigned_connection) = state.track_assignments.get(&track) {
-                        if let Some(client) = state.connections.iter().nth(*assigned_connection) {
-                            client.send(Packet::PlayNote {
-                                duration: duration_to_nanoseconds(*duration),
-                                frequency: note.to_hz().0,
-                                volume,
-                            }).expect("failed to send note packet");
-                        }
+                let state = shared_state.lock()
+                    .expect("failed to lock mutex to send note");
+                if let Some(assigned_connection) = state.track_assignments.get(&track) {
+                    if let Some(client) = state.connections.iter().nth(*assigned_connection) {
+                        client.send(Packet::PlayNote {
+                            duration: duration_to_nanoseconds(*duration),
+                            frequency: note.to_hz().0,
+                            volume,
+                        }).expect("failed to send note packet");
                     }
                 }
             },
@@ -319,7 +307,7 @@ pub fn server(matches: &ArgMatches) {
     println!("done");
 }
 
-fn assign_tracks(tracks: &[usize], connection_count: usize) -> HashMap<usize, usize> {
+fn assign_tracks(tracks: &HashSet<usize>, connection_count: usize) -> HashMap<usize, usize> {
     let mut result = HashMap::new();
 
     let mut index = 0;
@@ -331,13 +319,17 @@ fn assign_tracks(tracks: &[usize], connection_count: usize) -> HashMap<usize, us
     result
 }
 
-fn match_number_list(matches: &ArgMatches, name: &str, kind: &str) -> Option<Vec<usize>> {
+fn number_list_to_hashset<T>(matches: &ArgMatches, name: &str, kind: &str) -> HashSet<T>
+    where T: Eq + Debug + Hash + FromStr,
+    <T as FromStr>::Err: Debug {
     let result = matches.values_of(name)
-        .map(
-            |values| values.map(
-                |track| track.parse()
-                    .expect(&format!("invalid {} number", kind)))
-        .collect::<Vec<usize>>());
+        .map(|values| {
+            values.map(|track| {
+                track.parse().expect(&format!("invalid {} number", kind))
+            })
+                .collect::<HashSet<T>>()
+        })
+        .unwrap_or_else(|| HashSet::new());
 
     println!("{}: {:?}", name, result);
 
