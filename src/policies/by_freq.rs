@@ -77,6 +77,18 @@ impl ClientSelectionPolicy for ByFrequencyPolicy {
                 }
             }
 
+            if new_assignments.len() > 0 {
+                println!("assignments:");
+                for assignment in new_assignments.iter() {
+                    println!(
+                        "  notes [{} -> {}] => {:?}",
+                        assignment.lowest,
+                        assignment.highest,
+                        assignment.client
+                    );
+                }
+            }
+
             new_assignments
         } else {
             vec![]
