@@ -69,6 +69,7 @@ pub fn server(matches: &ArgMatches) {
             return;
         },
     };
+    let policy_name = matches.value_of("policy").unwrap();
 
     if volume_coefficient < 0.0 || volume_coefficient > 1.0 {
         println!("invalid volume value, must be between 0.0 and 1.0");
@@ -151,8 +152,9 @@ pub fn server(matches: &ArgMatches) {
         })
         .collect::<Vec<_>>();
 
-    let policy = select_policy("by-freq".to_string(), &events_to_play)
+    let policy = select_policy(policy_name.to_string(), &events_to_play)
         .expect("invalid policy");
+    println!("client selection policy: {}", policy_name);
 
     let shared_state_original = Arc::new(Mutex::new(
         SharedState::new(music.events().len() as u64, policy)

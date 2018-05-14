@@ -43,6 +43,16 @@ fn main() {
                 .long("port")
                 .default_value("4000")
                 .help("port to listen for client connections on"))
+            .arg(Arg::with_name("policy")
+                .long("policy")
+                .default_value("by-freq")
+                .help("determines policy used to assign a note to a particular client")
+                .possible_values(&[
+                    "broadcast",
+                    "by-track",
+                    "by-channel",
+                    "by-freq"
+                ]))
             .arg(Arg::with_name("volume")
                 .long("volume")
                 .default_value("1.0")
