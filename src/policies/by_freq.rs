@@ -15,13 +15,15 @@ struct FrequencyRangeAssignment {
 pub struct ByFrequencyPolicy {
     note_histogram: HashMap<u8, usize>,
     assignments: Vec<FrequencyRangeAssignment>,
+    spread: usize,
 }
 
 impl ByFrequencyPolicy {
-    pub fn new(events: &[MusicalEvent]) -> Self {
+    pub fn new(events: &[MusicalEvent], spread: usize) -> Self {
         Self {
             note_histogram: build_histogram(events),
             assignments: Vec::new(),
+            spread,
         }
     }
 }
@@ -49,7 +51,7 @@ impl ClientSelectionPolicy for ByFrequencyPolicy {
             let total_note_count: usize = self.note_histogram.values()
                 .map(|v| *v)
                 .sum();
-            let ideal_notes_per_client = total_note_count / clients.len();
+            let ideal_notes_per_client = (total_note_count / clients.len()) / self.spread;
 
             let mut new_assignments = Vec::new();
             let mut next_client_index = 0;
@@ -62,12 +64,14 @@ impl ClientSelectionPolicy for ByFrequencyPolicy {
                 let start_new_assignment = new_assignments.is_empty() || assigned_count >= ideal_notes_per_client;
 
                 if start_new_assignment {
+                    let client_index = next_client_index % clients.len();
+                    next_client_index += 1;
+
                     new_assignments.push(FrequencyRangeAssignment {
                         lowest: *note,
                         highest: *note,
-                        client: clients[next_client_index].uid.clone(),
+                        client: clients[client_index].uid.clone(),
                     });
-                    next_client_index += 1;
                     assigned_count = *count;
                 } else {
                     let last_assignment = new_assignments.last_mut().unwrap();

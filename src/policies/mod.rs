@@ -17,11 +17,12 @@ pub trait ClientSelectionPolicy: Send {
 }
 
 pub fn select_policy(name: String, events: &[MusicalEvent]) -> Option<Box<ClientSelectionPolicy>> {
-    match name.to_lowercase().as_str() {
+    match name.as_str() {
         "broadcast" => Some(Box::new(BroadcastPolicy::new())),
         "by-track" => Some(Box::new(ByTrackPolicy::new(events))),
         "by-channel" => Some(Box::new(ByChannelPolicy::new(events))),
-        "by-freq" => Some(Box::new(ByFrequencyPolicy::new(events))),
+        "by-freq" => Some(Box::new(ByFrequencyPolicy::new(events, 1))),
+        "by-freq-spreadX2" => Some(Box::new(ByFrequencyPolicy::new(events, 2))),
         _ => None,
     }
 }

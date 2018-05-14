@@ -51,7 +51,8 @@ fn main() {
                     "broadcast",
                     "by-track",
                     "by-channel",
-                    "by-freq"
+                    "by-freq",
+                    "by-freq-spreadX2",
                 ]))
             .arg(Arg::with_name("volume")
                 .long("volume")
