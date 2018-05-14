@@ -1,32 +1,54 @@
+use std::collections::{HashSet, HashMap};
+
 use super::super::connection::{ClientUID, ClientInfo};
+use super::super::midi::{Note, MusicalEvent};
 use super::ClientSelectionPolicy;
-use super::super::midi::Note;
 
 pub struct ByChannelPolicy {
-    all: Vec<ClientUID>,
+    channels: HashSet<u8>,
+    assignments: HashMap<u8, ClientUID>,
 }
 
 impl ByChannelPolicy {
-    pub fn new() -> Self {
+    pub fn new(events: &[MusicalEvent]) -> Self {
+        let channels = events.iter()
+            .filter_map(|event| {
+                match event {
+                    MusicalEvent::PlayNote(Note { channel, .. }) => {
+                        Some(*channel)
+                    },
+                    _ => None,
+                }
+            })
+            .collect::<HashSet<_>>();
+
         Self {
-            all: Vec::new(),
+            channels,
+            assignments: HashMap::new(),
         }
     }
 }
 
 impl ClientSelectionPolicy for ByChannelPolicy {
     fn on_clients_changed(&mut self, clients: &[ClientInfo]) {
-        self.all = clients.iter()
-            .map(|c| c.uid.clone())
-            .collect::<Vec<_>>();
+        let mut assignments = HashMap::new();
+        for (index, channel) in self.channels.iter().enumerate() {
+            assignments.insert(*channel, clients[index % clients.len()].uid.clone());
+        }
+        self.assignments = assignments;
+
+        if self.assignments.len() > 0 {
+            println!("assignments:");
+            for (channel, uid) in self.assignments.iter() {
+                println!("  channel {} => {:?}", channel, uid);
+            }
+        }
     }
 
     fn select_clients(&self, note: &Note) -> Vec<ClientUID> {
-        if self.all.len() == 0 {
-            vec![]
-        } else {
-            let uid = self.all[(note.channel as usize) % self.all.len()];
-            vec![uid]
+        match self.assignments.get(&note.channel) {
+            Some(uid) => vec![uid.clone()],
+            _ => vec![],
         }
     }
 }

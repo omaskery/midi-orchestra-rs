@@ -20,7 +20,7 @@ pub fn select_policy(name: String, events: &[MusicalEvent]) -> Option<Box<Client
     match name.to_lowercase().as_str() {
         "broadcast" => Some(Box::new(BroadcastPolicy::new())),
         "by-track" => Some(Box::new(ByTrackPolicy::new())),
-        "by-channel" => Some(Box::new(ByChannelPolicy::new())),
+        "by-channel" => Some(Box::new(ByChannelPolicy::new(events))),
         "by-freq" => Some(Box::new(ByFrequencyPolicy::new(events))),
         _ => None,
     }
