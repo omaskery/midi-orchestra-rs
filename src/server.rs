@@ -16,6 +16,7 @@ use std::hash::Hash;
 use std::fmt::Debug;
 use std;
 
+use itertools::Itertools;
 use pbr::ProgressBar;
 use pitch_calc::Step;
 use clap::ArgMatches;
@@ -132,11 +133,11 @@ pub fn server(matches: &ArgMatches) {
         .collect::<HashSet<usize>>();
 
     println!("tracks:");
-    println!("  {:?}", tracks_before_filtering);
-    println!("  {:?}", tracks);
+    println!("  pre  filter: {:?}", tracks_before_filtering.iter().sorted());
+    println!("  post filter: {:?}", tracks.iter().sorted());
     println!("channels:");
-    println!("  {:?}", channels_before_filtering);
-    println!("  {:?}", channels);
+    println!("  pre  filter: {:?}", channels_before_filtering.iter().sorted());
+    println!("  post filter: {:?}", channels.iter().sorted());
 
     let events_to_play = music.events().iter()
         .map(|e| e.clone())
@@ -312,7 +313,9 @@ fn number_list_to_hashset<T>(matches: &ArgMatches, name: &str, kind: &str) -> Ha
         })
         .unwrap_or_else(|| HashSet::new());
 
-    println!("{}: {:?}", name, result);
+    if result.len() > 0 {
+        println!("{}: {:?}", name, result);
+    }
 
     result
 }
