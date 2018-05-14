@@ -1,77 +1,25 @@
+use connection::{Connection, ClientUIDFactory, ClientInfo};
+use policies::{select_policy, ClientSelectionPolicy};
 use midi::{MusicalEvent, Note, TimingChange};
 use convert_duration::*;
 use packet::Packet;
 use midi;
 
-use std::collections::{HashMap, HashSet};
-use std::net::{TcpListener, TcpStream};
 use std::time::{Duration, Instant};
 use std::thread::{sleep, spawn};
+use std::collections::HashSet;
 use std::io::{Stdout, Write};
 use std::sync::{Arc, Mutex};
+use std::net::TcpListener;
 use std::str::FromStr;
 use std::hash::Hash;
 use std::fmt::Debug;
 use std;
 
-use bincode::{serialize_into, deserialize_from};
 use pbr::ProgressBar;
 use pitch_calc::Step;
 use clap::ArgMatches;
 use term_size;
-use bincode;
-
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-struct ClientUID(usize);
-
-trait ClientSelectionPolicy: Send {
-    fn on_clients_changed(&mut self, clients: &[ClientInfo]);
-    fn select_clients(&self, note: &Note) -> Vec<ClientUID>;
-}
-
-struct BroadcastPolicy {
-    all: Vec<ClientUID>,
-}
-
-impl ClientSelectionPolicy for BroadcastPolicy {
-    fn on_clients_changed(&mut self, clients: &[ClientInfo]) {
-        self.all = clients.iter()
-            .map(|c| c.uid)
-            .collect();
-    }
-    fn select_clients(&self, _note: &Note) -> Vec<ClientUID> {
-        self.all.clone()
-    }
-}
-
-fn select_policy(name: String) -> Option<Box<ClientSelectionPolicy>> {
-    match name.to_lowercase().as_str() {
-        "broadcast" => Some(Box::new(BroadcastPolicy {
-            all: Vec::new()
-        })),
-        _ => None,
-    }
-}
-
-#[derive(Clone, Debug)]
-struct ClientInfo {
-    uid: ClientUID,
-}
-
-struct Connection {
-    info: ClientInfo,
-    stream: TcpStream,
-}
-
-impl Connection {
-    pub fn send(&self, packet: Packet) -> Result<(), Box<bincode::ErrorKind>> {
-        serialize_into(&self.stream, &packet)
-    }
-
-    pub fn recv(&self) -> Result<Packet, Box<bincode::ErrorKind>> {
-        deserialize_from(&self.stream)
-    }
-}
 
 struct SharedState {
     connections: Vec<Connection>,
@@ -210,22 +158,16 @@ pub fn server(matches: &ArgMatches) {
     let shared_state = shared_state_original.clone();
     spawn(move || {
         println!("accepting client connections...");
-        let mut next_id = ClientUID(1);
+        let mut client_uid_factory = ClientUIDFactory::new();
         for stream in listener.incoming() {
             match stream {
                 Ok(s) => {
                     let mut state = shared_state_original.lock()
                         .expect("failed to acquire mutex while accepting");
-                    let mut connection = Connection {
-                        info: ClientInfo {
-                            uid: next_id,
-                        },
-                        stream: s,
-                    };
-                    next_id = ClientUID(next_id.0 + 1);
-
-                    connection.stream.set_nodelay(true)
-                        .expect("failed to set connection to be no-delay");
+                    let mut connection = Connection::new(
+                        s,
+                        ClientInfo::new(client_uid_factory.make())
+                    );
 
                     let info = connection.recv()
                         .expect("failed to receive client info packet");
@@ -354,18 +296,6 @@ pub fn server(matches: &ArgMatches) {
     }
 
     println!("done");
-}
-
-fn assign_tracks(tracks: &HashSet<usize>, connection_count: usize) -> HashMap<usize, usize> {
-    let mut result = HashMap::new();
-
-    let mut index = 0;
-    for track in tracks {
-        result.insert(*track, index);
-        index = (index + 1) % connection_count;
-    }
-
-    result
 }
 
 fn number_list_to_hashset<T>(matches: &ArgMatches, name: &str, kind: &str) -> HashSet<T>
