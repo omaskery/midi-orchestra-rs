@@ -1,13 +1,32 @@
-use std::collections::{HashMap, HashSet};
+use super::super::connection::{ClientUID, ClientInfo};
+use super::ClientSelectionPolicy;
+use super::super::midi::Note;
 
-fn assign_tracks(tracks: &HashSet<usize>, connection_count: usize) -> HashMap<usize, usize> {
-    let mut result = HashMap::new();
+pub struct ByTrackPolicy {
+    all: Vec<ClientUID>,
+}
 
-    let mut index = 0;
-    for track in tracks {
-        result.insert(*track, index);
-        index = (index + 1) % connection_count;
+impl ByTrackPolicy {
+    pub fn new() -> Self {
+        Self {
+            all: Vec::new(),
+        }
+    }
+}
+
+impl ClientSelectionPolicy for ByTrackPolicy {
+    fn on_clients_changed(&mut self, clients: &[ClientInfo]) {
+        self.all = clients.iter()
+            .map(|c| c.uid.clone())
+            .collect::<Vec<_>>();
     }
 
-    result
+    fn select_clients(&self, note: &Note) -> Vec<ClientUID> {
+        if self.all.len() == 0 {
+            vec![]
+        } else {
+            let uid = self.all[note.track % self.all.len()];
+            vec![uid]
+        }
+    }
 }
