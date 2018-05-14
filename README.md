@@ -53,4 +53,4 @@ Running a client 'forever' to avoid having to invoke it after each song:
 - [x] refactor so that midi code has tempo handling baked in, that way the subsequent systems can just manipulate musical events without constantly juggling time concerns
 - [x] then, based on that, can use the include/exclude track/channel arguments to simply filter what events go forward into the actual playback loop
 - [x] make channel/track filtering collect<>() using hashset or something rather than doing all that contains() checking with a Vec
-- [ ] once that's done, look into assigning frequency ranges to clients by placing all notes into a histogram (x-axis = frequency) and giving each client an equal "area under the graph" of adjacent buckets, which should now be possible since all musical events (after filtering) are now available
+- [x] once that's done, look into assigning frequency ranges to clients by placing all notes into a histogram (x-axis = frequency) and giving each client an equal "area under the graph" of adjacent buckets, which should now be possible since all musical events (after filtering) are now available

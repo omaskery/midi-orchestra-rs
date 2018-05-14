@@ -82,8 +82,6 @@ pub fn server(matches: &ArgMatches) {
     let listener = TcpListener::bind(format!("0.0.0.0:{}", port))
         .expect("unable to create TCP server");
 
-    let policy = select_policy("by-channel".to_string()).expect("invalid policy");
-
     println!("loading midi...");
     let music = midi::load_midi(path, verbose);
 
@@ -141,6 +139,7 @@ pub fn server(matches: &ArgMatches) {
     println!("  {:?}", channels);
 
     let events_to_play = music.events().iter()
+        .map(|e| e.clone())
         .filter(|e| {
             match e {
                 MusicalEvent::PlayNote(Note { track, channel, .. }) => {
@@ -150,6 +149,9 @@ pub fn server(matches: &ArgMatches) {
             }
         })
         .collect::<Vec<_>>();
+
+    let policy = select_policy("by-freq".to_string(), &events_to_play)
+        .expect("invalid policy");
 
     let shared_state_original = Arc::new(Mutex::new(
         SharedState::new(music.events().len() as u64, policy)
