@@ -184,8 +184,8 @@ pub fn server(matches: &ArgMatches) {
                     };
 
                     if okay {
+                        println!("connection accepted: {:?}", connection.info.uid);
                         state.connections.push(connection);
-                        state.print_before("connection accepted");
                         let clients_info = state.connections.iter()
                             .map(|c| c.info.clone())
                             .collect::<Vec<_>>();
