@@ -82,7 +82,7 @@ pub fn server(matches: &ArgMatches) {
     let listener = TcpListener::bind(format!("0.0.0.0:{}", port))
         .expect("unable to create TCP server");
 
-    let policy = select_policy("by-track".to_string()).expect("invalid policy");
+    let policy = select_policy("by-channel".to_string()).expect("invalid policy");
 
     println!("loading midi...");
     let music = midi::load_midi(path, verbose);
